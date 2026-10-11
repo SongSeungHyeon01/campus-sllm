@@ -1,0 +1,810 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>물어봐 캠퍼스 API 명세서 v1.0</title><style>
+@page { size: A4; margin: 16mm 14mm 16mm 14mm; }
+* { box-sizing: border-box; }
+body { font-family: 'Malgun Gothic', sans-serif; font-size: 9.6pt; line-height: 1.55; color: #1d1d1f; margin: 0; }
+.cover { border-bottom: 3px solid #1f3a5f; padding-bottom: 10px; margin-bottom: 14px; }
+.cover .tag { display: inline-block; background: #1f3a5f; color: #fff; font-size: 8.5pt; padding: 2px 9px; border-radius: 3px; letter-spacing: .5px; }
+.cover h1 { font-size: 19pt; margin: 8px 0 4px; color: #1f3a5f; line-height: 1.3; }
+.meta { background: #f4f6f9; border: 1px solid #dde3ea; border-radius: 6px; padding: 8px 14px; font-size: 8.8pt; margin-bottom: 6px; }
+.meta ul { margin: 0; padding-left: 16px; } .meta li { margin: 1px 0; }
+h2 { font-size: 13.5pt; color: #1f3a5f; border-left: 5px solid #1f3a5f; padding: 2px 0 2px 9px; margin: 18px 0 8px; }
+h2.newpage { page-break-before: always; margin-top: 0; }
+h3 { font-size: 11pt; margin: 16px 0 6px; padding-bottom: 4px; border-bottom: 1px solid #d0d7e1; page-break-after: avoid; }
+h3 + * { page-break-before: avoid; }
+p { margin: 5px 0; }
+ul { margin: 4px 0; padding-left: 18px; } li { margin: 2px 0; }
+table { width: 100%; border-collapse: collapse; margin: 7px 0 10px; font-size: 8.6pt; line-height: 1.45; }
+thead { display: table-header-group; }
+tr { page-break-inside: avoid; }
+th { background: #1f3a5f; color: #fff; font-weight: 600; text-align: left; padding: 5px 7px; border: 1px solid #1f3a5f; }
+td { padding: 5px 7px; border: 1px solid #d5dbe3; vertical-align: top; }
+tbody tr:nth-child(even) td { background: #f7f9fb; }
+table table { margin: 4px 0; }
+strong { color: #0f2744; }
+figure { margin: 10px auto 14px; text-align: center; page-break-inside: avoid; }
+figure img { max-width: 100%; max-height: 118mm; border: 1px solid #dde3ea; border-radius: 4px; }
+figcaption { font-size: 8.4pt; color: #555; margin-top: 4px; }
+.figrow { display: flex; gap: 12px; page-break-inside: avoid; }
+.figrow figure { flex: 1; margin: 6px 0; }
+.figrow figure img { max-height: 110mm; }
+pre { background: #f4f6f9; border: 1px solid #dde3ea; border-radius: 5px; padding: 8px 10px; font-size: 8pt; line-height: 1.45; white-space: pre-wrap; word-break: break-all; page-break-inside: avoid; }
+pre code { background: none; padding: 0; font-size: 8pt; }
+code { font-family: Consolas, 'Malgun Gothic', monospace; font-size: 8.4pt; background: #eef1f5; padding: 0 4px; border-radius: 3px; }
+.sev { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 8pt; font-weight: 700; white-space: nowrap; }
+.sev.hi { background: #fde2e1; color: #b42318; } .sev.mid { background: #fff1d6; color: #9a6200; } .sev.lo { background: #e3f4e8; color: #22703a; }
+.eid { display: inline-block; background: #e6ecf4; color: #1f3a5f; font-weight: 700; padding: 0 6px; border-radius: 3px; white-space: nowrap; font-size: 8.4pt; }
+.eid.big { background: #1f3a5f; color: #fff; font-size: 9.5pt; padding: 1px 8px; margin-right: 4px; }
+</style></head>
+<body><div class="cover"><span class="tag">캡스톤디자인 1조 · 물어봐 캠퍼스</span><h1>물어봐 캠퍼스 API 명세서 v1.0</h1></div>
+<div class="meta"><ul>
+<li>작성일: 2026-10-12 · 캡스톤디자인 1조 (송승현·이승우)</li>
+<li>기준 문서: 요구사항 정의서 v1.11, 화면설계서 v1.5, DB 모델링 v1.0 (<code>05.1조_Ask Campus_DB모델링.pptx</code>)</li>
+<li>요구사항 FR-019는 "API 요청·응답 형식은 JSON으로 하며, 상세 명세는 설계 단계에서 정의한다"고 정했습니다. 이 문서가 그 명세입니다.</li>
+<li>표의 테이블 이름은 DB 모델링의 테이블과 같습니다.</li>
+</ul></div><h2>0. 공통 규칙</h2>
+<table>
+<thead>
+<tr>
+<th>항목</th>
+<th>규칙</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>주소</td>
+<td>앱 API <code>/api/v1/…</code>, 관리 웹 API <code>/admin/api/…</code>. 관리 웹 화면(Jinja2)은 <code>/admin/…</code>이며 화면이 아래 관리 웹 API를 호출</td>
+</tr>
+<tr>
+<td>형식</td>
+<td>요청·응답 모두 JSON (UTF-8). 보충 문서 업로드만 <code>multipart/form-data</code>, CSV 내려받기만 <code>text/csv</code></td>
+</tr>
+<tr>
+<td>시간</td>
+<td>한국 표준시(KST) ISO 8601 문자열 (예: <code>2026-10-12T09:00:00+09:00</code>)</td>
+</tr>
+<tr>
+<td>학생 인증</td>
+<td>없음 (로그인 없이 익명 이용, 2.6). 이름·학번·기기 ID를 받지 않음</td>
+</tr>
+<tr>
+<td>관리 웹 인증</td>
+<td>이메일 인증 코드로 로그인하면 세션 쿠키 발급 (<code>HttpOnly</code>, <code>SameSite=Lax</code>, 12시간). 쿠키가 없거나 만료되면 401</td>
+</tr>
+<tr>
+<td>권한</td>
+<td>🔵 중간 관리자(학과 조교)·관리자 모두 사용 / 🔴 관리자만 사용 (중간 관리자가 부르면 403)</td>
+</tr>
+<tr>
+<td>요청 제한</td>
+<td>질문은 1~200자. 앱 API는 같은 접속 기준 분당 20회 (메모리에서만 세고 저장하지 않음)</td>
+</tr>
+<tr>
+<td>응답 시간</td>
+<td>질문 답변 평균 5초 이내 (PER-001). 앱은 10초 동안 응답이 없으면 재시도 버튼 표시 (AVL-003)</td>
+</tr>
+</tbody>
+</table>
+<h3>공통 오류 형식</h3>
+<pre><code class="language-json">{ &quot;error&quot;: { &quot;code&quot;: &quot;INVALID_QUESTION&quot;, &quot;message&quot;: &quot;질문은 1~200자로 입력해 주세요.&quot; } }
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>HTTP</th>
+<th>code</th>
+<th>언제</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>400</td>
+<td><code>INVALID_QUESTION</code></td>
+<td>질문이 비었거나 200자 초과</td>
+</tr>
+<tr>
+<td>400</td>
+<td><code>INVALID_INPUT</code></td>
+<td>그 밖의 입력 형식 오류 (이메일 형식, 파일 형식·크기 등)</td>
+</tr>
+<tr>
+<td>401</td>
+<td><code>UNAUTHORIZED</code></td>
+<td>관리 웹 세션이 없거나 만료됨</td>
+</tr>
+<tr>
+<td>401</td>
+<td><code>INVALID_CODE</code></td>
+<td>인증 코드가 틀리거나 만료·사용됨</td>
+</tr>
+<tr>
+<td>403</td>
+<td><code>FORBIDDEN</code></td>
+<td>중간 관리자가 관리자 전용 기능 호출, 또는 고정 관리자 삭제 시도</td>
+</tr>
+<tr>
+<td>404</td>
+<td><code>NOT_FOUND</code></td>
+<td>대상이 없음</td>
+</tr>
+<tr>
+<td>409</td>
+<td><code>CONFLICT</code></td>
+<td>이미 등록된 이메일·동의어, 이미 답변한 질문</td>
+</tr>
+<tr>
+<td>423</td>
+<td><code>LOCKED</code></td>
+<td>인증 코드 5회 실패로 10분 동안 로그인 제한</td>
+</tr>
+<tr>
+<td>429</td>
+<td><code>RATE_LIMITED</code></td>
+<td>요청 제한 초과 (질문 분당 20회, 인증 코드 1분 1회)</td>
+</tr>
+<tr>
+<td>503</td>
+<td><code>MODEL_LOADING</code></td>
+<td>서버가 켜진 직후 모델을 불러오는 중</td>
+</tr>
+</tbody>
+</table>
+
+<h2 class="newpage">1. 앱 API (학생 앱)</h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>메서드·경로</th>
+<th>용도</th>
+<th>화면</th>
+<th>요구사항</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1‑1</td>
+<td><code>GET /api/v1/health</code></td>
+<td>서버 상태 확인</td>
+<td>—</td>
+<td>FR-019</td>
+</tr>
+<tr>
+<td>1‑2</td>
+<td><code>POST /api/v1/ask</code></td>
+<td>질문하고 답변 받기</td>
+<td>SCR-001, 001-A, 001-B</td>
+<td>FR-001~005, 007, 022, 023, 027, 028</td>
+</tr>
+<tr>
+<td>1‑3</td>
+<td><code>GET /api/v1/deadlines</code></td>
+<td>마감 임박 일정 목록</td>
+<td>SCR-005</td>
+<td>FR-020</td>
+</tr>
+<tr>
+<td>1‑4</td>
+<td><code>GET /api/v1/faqs/recommended</code></td>
+<td>카테고리별 추천 질문</td>
+<td>SCR-001</td>
+<td>FR-006</td>
+</tr>
+<tr>
+<td>1‑5</td>
+<td><code>GET /api/v1/faqs/{faq_id}</code></td>
+<td>답변 알림을 눌렀을 때 질문과 답변</td>
+<td>SCR-001-C</td>
+<td>FR-030</td>
+</tr>
+</tbody>
+</table>
+<h3>1-1. <code>GET /api/v1/health</code></h3>
+<pre><code class="language-json">{ &quot;status&quot;: &quot;ok&quot;, &quot;model_ready&quot;: true, &quot;data_updated_at&quot;: &quot;2026-10-12T09:00:12+09:00&quot; }
+</code></pre>
+<p><code>data_updated_at</code>은 설정 화면(SCR-004)의 '데이터 기준일'에 씁니다.</p>
+<h3>1-2. <code>POST /api/v1/ask</code></h3>
+<p>요청</p>
+<table>
+<thead>
+<tr>
+<th>필드</th>
+<th>타입</th>
+<th>필수</th>
+<th>설명</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>question</code></td>
+<td>string</td>
+<td>O</td>
+<td>질문 (1~200자)</td>
+</tr>
+<tr>
+<td><code>category</code></td>
+<td>string</td>
+<td></td>
+<td>고른 카테고리 칩: <code>학사정보</code> / <code>통학버스</code> / <code>동아리·행사</code> / <code>교외활동</code></td>
+</tr>
+<tr>
+<td><code>campus</code></td>
+<td>string</td>
+<td>O</td>
+<td>설정 캠퍼스: <code>영동</code> / <code>아산</code></td>
+</tr>
+<tr>
+<td><code>interests</code></td>
+<td>string[]</td>
+<td></td>
+<td>설정한 학과·관심 분야 (서버에 저장하지 않음)</td>
+</tr>
+<tr>
+<td><code>fcm_token</code></td>
+<td>string</td>
+<td></td>
+<td>알림 권한을 허용한 경우의 익명 기기 토큰. 근거가 없을 때만 <code>notify_token</code>에 저장</td>
+</tr>
+<tr>
+<td><code>clarify</code></td>
+<td>object</td>
+<td></td>
+<td>되묻기에 답할 때만: <code>{ "original_question": "...", "choice": "AI·SW" }</code></td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-json">{
+  &quot;question&quot;: &quot;지원할 만한 공모전 있어?&quot;,
+  &quot;category&quot;: &quot;교외활동&quot;,
+  &quot;campus&quot;: &quot;아산&quot;,
+  &quot;interests&quot;: [],
+  &quot;fcm_token&quot;: &quot;dK3…(익명 토큰)&quot;
+}
+</code></pre>
+<p>응답 200. <code>answer_type</code>에 따라 채워지는 필드가 다릅니다.</p>
+<table>
+<thead>
+<tr>
+<th>필드</th>
+<th>타입</th>
+<th>설명</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>answer_type</code></td>
+<td>string</td>
+<td><code>문서</code> / <code>FAQ</code> / <code>되묻기</code> / <code>근거없음</code></td>
+</tr>
+<tr>
+<td><code>answer</code></td>
+<td>string</td>
+<td>답변 문장 (존댓말). 근거없음이면 안내 문구</td>
+</tr>
+<tr>
+<td><code>sources</code></td>
+<td>object[]</td>
+<td>출처 최대 3개 (유사도 순, FR-004): <code>title</code>, <code>kind</code>(<code>공지</code>/<code>학과 조교 답변</code>/<code>보충 문서</code>), <code>source_url</code>, <code>menu_path</code>, <code>collected_at</code></td>
+</tr>
+<tr>
+<td><code>schedule</code></td>
+<td>object|null</td>
+<td>일정 답변이면 '관심 일정 저장'용: <code>chunk_id</code>, <code>title</code>, <code>deadline</code>, <code>source_url</code></td>
+</tr>
+<tr>
+<td><code>clarify</code></td>
+<td>object|null</td>
+<td>되묻기면 <code>question</code>과 <code>options</code> (항상 <code>전체</code> 포함, FR-027)</td>
+</tr>
+<tr>
+<td><code>pending_registered</code></td>
+<td>boolean</td>
+<td>근거가 없어 답변 대기에 자동 등록됐는지 (FR-028)</td>
+</tr>
+<tr>
+<td><code>elapsed_ms</code></td>
+<td>integer</td>
+<td>서버 처리 시간</td>
+</tr>
+</tbody>
+</table>
+<p>되묻기 예</p>
+<pre><code class="language-json">{
+  &quot;answer_type&quot;: &quot;되묻기&quot;,
+  &quot;answer&quot;: &quot;어떤 분야를 찾으세요? 학과나 관심 분야를 알려주시면 맞춰 드릴게요.&quot;,
+  &quot;sources&quot;: [], &quot;schedule&quot;: null,
+  &quot;clarify&quot;: { &quot;question&quot;: &quot;어떤 분야를 찾으세요?&quot;, &quot;options&quot;: [&quot;AI·SW&quot;, &quot;디자인&quot;, &quot;경영·마케팅&quot;, &quot;전체&quot;] },
+  &quot;pending_registered&quot;: false, &quot;elapsed_ms&quot;: 820
+}
+</code></pre>
+<p>근거없음 예</p>
+<pre><code class="language-json">{
+  &quot;answer_type&quot;: &quot;근거없음&quot;,
+  &quot;answer&quot;: &quot;해당 정보를 찾을 수 없습니다. 아직 답을 모르는 질문이라 학과 조교에게 전달했어요. 답변이 등록되면 알림으로 알려 드릴게요.&quot;,
+  &quot;sources&quot;: [], &quot;schedule&quot;: null, &quot;clarify&quot;: null,
+  &quot;pending_registered&quot;: true, &quot;elapsed_ms&quot;: 2140
+}
+</code></pre>
+<p>서버 처리 순서</p>
+<ol>
+<li>질문 길이·요청 제한 확인 → 동의어 사전(<code>synonym</code>)으로 줄임말을 바꿈 (예: 수정 → 수강정정)</li>
+<li>조건이 빠졌으면 되묻기로 응답 (한 질문에 최대 1회)</li>
+<li>질문 임베딩 → 벡터 DB에서 FAQ와 청크를 상위 5개 검색 (카테고리·캠퍼스 필터)</li>
+<li>유사도가 기준 이상이면 sLLM이 근거와 현재 날짜·시각(KST)으로 답변 생성</li>
+<li>기준 미만이면 <code>pending_question</code>에 자동 등록 (비슷한 질문이면 <code>question_count</code> + 1). <code>fcm_token</code>이 있으면 <code>notify_token</code>에 추가 (같은 기기의 같은 질문은 1회만)</li>
+<li><code>query_log</code>에 질문 문장(이름·학번·전화번호 형태는 가림)·답변 유형·처리 시간만 기록</li>
+</ol>
+<h3>1-3. <code>GET /api/v1/deadlines</code></h3>
+<table>
+<thead>
+<tr>
+<th>쿼리</th>
+<th>설명</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>campus</code></td>
+<td><code>영동</code> / <code>아산</code> (필수)</td>
+</tr>
+<tr>
+<td><code>type</code></td>
+<td><code>전체</code>(기본) / <code>학사</code> / <code>교외활동</code>. '관심' 필터는 기기에 저장한 일정으로 앱이 거름</td>
+</tr>
+<tr>
+<td><code>days</code></td>
+<td>오늘부터 며칠 안의 마감까지 (기본 60)</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-json">{
+  &quot;items&quot;: [
+    { &quot;chunk_id&quot;: &quot;notice-2611-0&quot;, &quot;title&quot;: &quot;2학기 수강정정 마감&quot;, &quot;category&quot;: &quot;학사정보&quot;,
+      &quot;deadline&quot;: &quot;2026-09-30T18:00:00+09:00&quot;, &quot;d_day&quot;: 1, &quot;source_url&quot;: &quot;https://…&quot;, &quot;posted_at&quot;: &quot;2026-09-24T10:00:00+09:00&quot; }
+  ]
+}
+</code></pre>
+<p><code>chunk.deadline</code>이 있는 항목만 마감 순으로 보냅니다 (추출이 불확실한 항목은 NULL이라 빠짐, FR-020).</p>
+<h3>1-4. <code>GET /api/v1/faqs/recommended</code></h3>
+<p>쿼리: <code>category</code>(선택), <code>campus</code>(필수), <code>limit</code>(기본 4). <code>faq.ask_count</code>가 많은 순입니다.</p>
+<pre><code class="language-json">{ &quot;items&quot;: [ { &quot;faq_id&quot;: 31, &quot;question&quot;: &quot;수강정정 언제까지야?&quot; }, { &quot;faq_id&quot;: 12, &quot;question&quot;: &quot;이번 주 학사일정 알려줘&quot; } ] }
+</code></pre>
+<h3>1-5. <code>GET /api/v1/faqs/{faq_id}</code></h3>
+<pre><code class="language-json">{
+  &quot;faq_id&quot;: 57, &quot;question&quot;: &quot;편입생 전공 학점 인정 몇 학점까지?&quot;,
+  &quot;answer&quot;: &quot;편입생의 전공 학점 인정은 학과 안내 기준에 따라 최대 OO학점까지 인정됩니다. …&quot;,
+  &quot;category&quot;: &quot;학사정보&quot;, &quot;source_label&quot;: &quot;학과 조교 답변 · 2026-10-09&quot;,
+  &quot;ref_doc&quot;: { &quot;title&quot;: &quot;편입생 학점 인정 안내&quot;, &quot;url&quot;: null }
+}
+</code></pre>
+<h3>답변 알림 (FCM 데이터 메시지, 서버 → 앱)</h3>
+<pre><code class="language-json">{ &quot;type&quot;: &quot;answer_registered&quot;, &quot;faq_id&quot;: &quot;57&quot;, &quot;title&quot;: &quot;물어봐 캠퍼스&quot;, &quot;body&quot;: &quot;물어본 질문에 답변이 등록되었어요&quot; }
+</code></pre>
+<p>앱은 알림을 누르면 1-5를 호출해 SCR-001-C를 보여 줍니다. 서버는 보낸 뒤 해당 <code>notify_token</code> 행을 지웁니다 (FR-030).</p>
+
+<h2 class="newpage">2. 관리 웹 API (학과 조교·관리자)</h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>메서드·경로</th>
+<th>권한</th>
+<th>용도</th>
+<th>화면</th>
+<th>요구사항</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>2‑1</td>
+<td><code>POST /admin/api/auth/code</code></td>
+<td>누구나</td>
+<td>인증 코드 받기</td>
+<td>SCR-006-A</td>
+<td>FR-033</td>
+</tr>
+<tr>
+<td>2‑2</td>
+<td><code>POST /admin/api/auth/login</code></td>
+<td>누구나</td>
+<td>코드로 로그인</td>
+<td>SCR-006-A</td>
+<td>FR-033</td>
+</tr>
+<tr>
+<td>2‑3</td>
+<td><code>POST /admin/api/auth/logout</code></td>
+<td>🔵</td>
+<td>로그아웃</td>
+<td>공통</td>
+<td>FR-033</td>
+</tr>
+<tr>
+<td>2‑4</td>
+<td><code>GET /admin/api/dashboard</code></td>
+<td>🔵</td>
+<td>운영 지표</td>
+<td>SCR-006</td>
+<td>FR-025</td>
+</tr>
+<tr>
+<td>2‑5</td>
+<td><code>GET /admin/api/pending</code></td>
+<td>🔵</td>
+<td>답변 대기 목록</td>
+<td>SCR-006</td>
+<td>FR-025, 028</td>
+</tr>
+<tr>
+<td>2‑6</td>
+<td><code>POST /admin/api/pending/{id}/answer</code></td>
+<td>🔵</td>
+<td>답변 작성·즉시 반영·알림</td>
+<td>SCR-006-B</td>
+<td>FR-029, 030</td>
+</tr>
+<tr>
+<td>2‑7</td>
+<td><code>POST /admin/api/pending/{id}/not-mine</code></td>
+<td>🔵</td>
+<td>담당 아님 표시</td>
+<td>SCR-006, 006-B</td>
+<td>FR-029</td>
+</tr>
+<tr>
+<td>2‑8</td>
+<td><code>GET·PUT·DELETE /admin/api/faqs…</code></td>
+<td>🔵</td>
+<td>FAQ 조회·수정·삭제</td>
+<td>SCR-006 (FAQ 관리)</td>
+<td>FR-024, 029</td>
+</tr>
+<tr>
+<td>2‑9</td>
+<td><code>GET·POST·DELETE /admin/api/managers…</code></td>
+<td>🔴</td>
+<td>중간 관리자 이메일 관리</td>
+<td>SCR-006-D</td>
+<td>FR-032</td>
+</tr>
+<tr>
+<td>2‑10</td>
+<td><code>GET·POST·DELETE /admin/api/documents…</code></td>
+<td>🔴</td>
+<td>보충 문서 업로드</td>
+<td>SCR-006-C</td>
+<td>FR-016, 024</td>
+</tr>
+<tr>
+<td>2‑11</td>
+<td><code>GET·POST·DELETE /admin/api/synonyms…</code></td>
+<td>🔴</td>
+<td>동의어 사전</td>
+<td>SCR-006</td>
+<td>FR-002, 024</td>
+</tr>
+<tr>
+<td>2‑12</td>
+<td><code>GET /admin/api/collect/status</code>, <code>POST /admin/api/collect/run</code></td>
+<td>🔴</td>
+<td>수집 현황·수동 실행</td>
+<td>SCR-006 (수집 현황)</td>
+<td>FR-014, 024</td>
+</tr>
+<tr>
+<td>2‑13</td>
+<td><code>GET /admin/api/pending.csv</code>, <code>GET /admin/api/faqs.csv</code></td>
+<td>🔵</td>
+<td>CSV 내려받기</td>
+<td>SCR-006</td>
+<td>SCR-006 인쇄 조건</td>
+</tr>
+</tbody>
+</table>
+<h3>2-1. <code>POST /admin/api/auth/code</code></h3>
+<p>요청 <code>{ "email": "assist@u1.ac.kr" }</code> → 응답 200 (등록 여부와 관계없이 같은 문구, FR-033)</p>
+<pre><code class="language-json">{ &quot;message&quot;: &quot;등록된 이메일이면 인증 코드를 보냈습니다.&quot; }
+</code></pre>
+<ul>
+<li>등록된 이메일이면 6자리 코드를 만들어 해시만 <code>auth_code</code>에 저장하고 메일로 보냄 (1분 이내 발송, PER-011)</li>
+<li>같은 이메일로 1분 안에 다시 요청하면 429</li>
+</ul>
+<h3>2-2. <code>POST /admin/api/auth/login</code></h3>
+<p>요청 <code>{ "email": "assist@u1.ac.kr", "code": "381042" }</code> → 응답 200 + 세션 쿠키</p>
+<pre><code class="language-json">{ &quot;role&quot;: &quot;중간 관리자&quot;, &quot;name&quot;: &quot;김조교&quot;, &quot;expires_at&quot;: &quot;2026-10-12T21:30:00+09:00&quot; }
+</code></pre>
+<ul>
+<li>틀리면 401 <code>INVALID_CODE</code> (<code>fail_count</code> + 1), 5회 틀리면 423 <code>LOCKED</code> (10분)</li>
+<li>성공하면 코드에 <code>used_at</code>을 기록하고 <code>login_session</code> 생성, <code>manager.last_login_at</code> 갱신</li>
+</ul>
+<h3>2-4. <code>GET /admin/api/dashboard</code></h3>
+<pre><code class="language-json">{ &quot;today_questions&quot;: 128, &quot;pending_count&quot;: 6, &quot;avg_response_ms&quot;: 3400,
+  &quot;daily&quot;: [ { &quot;date&quot;: &quot;2026-10-11&quot;, &quot;questions&quot;: 97, &quot;no_answer&quot;: 4 } ] }
+</code></pre>
+<p><code>query_log</code>와 <code>pending_question</code>에서 집계합니다 (최근 7일).</p>
+<h3>2-5. <code>GET /admin/api/pending</code></h3>
+<p>쿼리: <code>status</code>(기본 <code>대기</code>), <code>category</code>. 같은 질문 수가 많은 순입니다.</p>
+<pre><code class="language-json">{ &quot;items&quot;: [ { &quot;pending_id&quot;: 14, &quot;question&quot;: &quot;편입생 전공 학점 인정 몇 학점까지?&quot;, &quot;category&quot;: &quot;학사정보&quot;,
+               &quot;campus&quot;: &quot;아산&quot;, &quot;question_count&quot;: 14, &quot;notify_count&quot;: 14,
+               &quot;first_asked_at&quot;: &quot;2026-10-07T13:20:00+09:00&quot;, &quot;expires_at&quot;: &quot;2026-11-06T13:20:00+09:00&quot; } ] }
+</code></pre>
+<p><code>notify_count</code>는 알림을 받을 기기 수입니다. 기기 토큰 자체는 응답에 넣지 않습니다.</p>
+<h3>2-6. <code>POST /admin/api/pending/{id}/answer</code></h3>
+<p>요청</p>
+<table>
+<thead>
+<tr>
+<th>필드</th>
+<th>필수</th>
+<th>설명</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>question</code></td>
+<td>O</td>
+<td>FAQ로 저장할 질문 (대표 문장을 다듬어 100자 이내)</td>
+</tr>
+<tr>
+<td><code>answer</code></td>
+<td>O</td>
+<td>답변</td>
+</tr>
+<tr>
+<td><code>category</code></td>
+<td>O</td>
+<td>카테고리</td>
+</tr>
+<tr>
+<td><code>campus</code></td>
+<td></td>
+<td>캠퍼스</td>
+</tr>
+<tr>
+<td><code>ref_doc_id</code></td>
+<td></td>
+<td>근거 보충 문서 (<code>document.doc_id</code>)</td>
+</tr>
+</tbody>
+</table>
+<p>응답 201</p>
+<pre><code class="language-json">{ &quot;faq_id&quot;: 57, &quot;indexed_at&quot;: &quot;2026-10-12T10:02:11+09:00&quot;, &quot;notified&quot;: 14 }
+</code></pre>
+<p>서버 처리 (승인 없이 바로, 1분 이내, PER-010)</p>
+<ol>
+<li><code>faq</code> 생성 (<code>pending_id</code>, <code>author_id</code> = 로그인한 사람) → <code>pending_question.status = 답변완료</code>, <code>handled_by</code>·<code>handled_at</code> 기록</li>
+<li>질문·답변을 임베딩해 벡터 DB <code>faq</code> 컬렉션에 추가 → <code>faq.indexed_at</code> 기록</li>
+<li>이 질문의 <code>notify_token</code> 전체에 FCM 데이터 메시지 발송 → 토큰 행 삭제</li>
+</ol>
+<p>이미 답변한 질문이면 409입니다.</p>
+<h3>2-7. <code>POST /admin/api/pending/{id}/not-mine</code></h3>
+<p>본문 없음 → 200 <code>{ "status": "담당아님" }</code>. 요약 메일과 대기 목록에서 빠지고, 관리자가 확인해 다른 경로로 안내합니다.</p>
+<h3>2-8. FAQ</h3>
+<table>
+<thead>
+<tr>
+<th>메서드·경로</th>
+<th>설명</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET /admin/api/faqs?category=&amp;q=</code></td>
+<td>목록 (<code>faq_id</code>, <code>question</code>, <code>category</code>, 작성자, <code>created_at</code>, <code>ask_count</code>)</td>
+</tr>
+<tr>
+<td><code>PUT /admin/api/faqs/{faq_id}</code></td>
+<td>수정 (<code>question</code>, <code>answer</code>, <code>category</code>, <code>campus</code>, <code>ref_doc_id</code>) → 즉시 재색인</td>
+</tr>
+<tr>
+<td><code>DELETE /admin/api/faqs/{faq_id}</code></td>
+<td>삭제 → 벡터 DB에서도 즉시 제거 (204)</td>
+</tr>
+</tbody>
+</table>
+<h3>2-9. 중간 관리자 🔴</h3>
+<table>
+<thead>
+<tr>
+<th>메서드·경로</th>
+<th>설명</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET /admin/api/managers</code></td>
+<td>목록 (<code>email</code>, <code>name</code>, <code>affiliation</code>, <code>role</code>, <code>created_at</code>, <code>last_login_at</code>, <code>is_fixed</code>)</td>
+</tr>
+<tr>
+<td><code>POST /admin/api/managers</code></td>
+<td>등록 <code>{ "email", "name"?, "affiliation"? }</code> → 201. 이메일 형식 오류 400, 이미 있으면 409</td>
+</tr>
+<tr>
+<td><code>DELETE /admin/api/managers/{manager_id}</code></td>
+<td>삭제 → 204. 세션·인증 코드 함께 삭제(로그인 즉시 종료), 요약 메일 대상에서 빠짐. 고정 관리자는 403</td>
+</tr>
+</tbody>
+</table>
+<h3>2-10. 보충 문서 🔴</h3>
+<table>
+<thead>
+<tr>
+<th>메서드·경로</th>
+<th>설명</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>POST /admin/api/documents</code></td>
+<td><code>multipart/form-data</code>: <code>file</code>(PDF·HWP·TXT, 10MB 이하), <code>title</code>, <code>category</code>, <code>provider</code> → 202 <code>{ "doc_id": 88, "status": "재색인 대기" }</code></td>
+</tr>
+<tr>
+<td><code>GET /admin/api/documents</code></td>
+<td>목록 (<code>title</code>, <code>provider</code>, <code>collected_at</code>, <code>status</code>(색인 완료/재색인 대기), 청크 수)</td>
+</tr>
+<tr>
+<td><code>DELETE /admin/api/documents/{doc_id}</code></td>
+<td>삭제 → 청크와 벡터 DB 임베딩도 삭제 (204)</td>
+</tr>
+</tbody>
+</table>
+<h3>2-11. 동의어 🔴</h3>
+<p><code>GET /admin/api/synonyms</code>, <code>POST</code> <code>{ "term": "수정", "canonical": "수강정정" }</code> (이미 있으면 409), <code>DELETE /admin/api/synonyms/{synonym_id}</code></p>
+<h3>2-12. 수집 현황 🔴</h3>
+<p><code>GET /admin/api/collect/status</code></p>
+<pre><code class="language-json">{ &quot;items&quot;: [ { &quot;source_id&quot;: 3, &quot;name&quot;: &quot;학사공지&quot;, &quot;interval_min&quot;: 180, &quot;last_success_at&quot;: &quot;2026-10-12T09:00:40+09:00&quot;,
+               &quot;last_status&quot;: &quot;성공&quot;, &quot;error_message&quot;: null } ] }
+</code></pre>
+<p><code>POST /admin/api/collect/run</code> <code>{ "source_id": 3 }</code> (생략하면 전체) → 202. 결과는 <code>collect_log</code>에 남습니다.</p>
+<h3>2-13. CSV 내려받기</h3>
+<p><code>GET /admin/api/pending.csv</code>, <code>GET /admin/api/faqs.csv</code> → <code>text/csv; charset=utf-8</code> (엑셀에서 한글이 깨지지 않게 BOM 포함)</p>
+
+<h2 class="newpage">3. 서버 내부 작업 (스케줄러, HTTP 아님)</h2>
+<table>
+<thead>
+<tr>
+<th>작업</th>
+<th>시각</th>
+<th>내용</th>
+<th>테이블</th>
+<th>요구사항</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>자주 바뀌는 소스 수집</td>
+<td>3시간마다</td>
+<td>학사·일반·학과 공지, 교외활동(온통청년 API)</td>
+<td><code>source</code>, <code>document</code>, <code>chunk</code>, <code>collect_log</code></td>
+<td>FR-014, PER-008</td>
+</tr>
+<tr>
+<td>하루 1회 소스 수집</td>
+<td>매일 03:00</td>
+<td>학사일정, 통학버스(주말·방학 포함), 동아리, 캠퍼스맵, 학사요람</td>
+<td>같음</td>
+<td>FR-014, AVL-001</td>
+</tr>
+<tr>
+<td>답변 대기 요약 메일</td>
+<td>매일 09:00</td>
+<td>대기 1건 이상일 때만 중간 관리자에게 발송. 서버가 꺼져 있었으면 켜진 뒤 그날 한 번</td>
+<td><code>pending_question</code>, <code>manager</code>, <code>digest_log</code></td>
+<td>FR-031, AVL-009</td>
+</tr>
+<tr>
+<td>답변 대기 만료</td>
+<td>매일 00:10</td>
+<td>30일 지난 '대기'를 '만료'로, 알림 토큰 삭제</td>
+<td><code>pending_question</code>, <code>notify_token</code></td>
+<td>AVL-008</td>
+</tr>
+<tr>
+<td>만료 데이터 정리</td>
+<td>매일 00:20</td>
+<td>만료된 인증 코드·세션 삭제</td>
+<td><code>auth_code</code>, <code>login_session</code></td>
+<td>FR-033</td>
+</tr>
+</tbody>
+</table>
+<h3>요약 메일 형식 (SCR-006-E)</h3>
+<ul>
+<li>제목: <code>[물어봐 캠퍼스] 답변 대기 6건</code></li>
+<li>본문: 같은 질문 수가 많은 순으로 질문 문장·카테고리·같은 질문 수 표, '답변 페이지에서 확인하기' 링크 (<code>/admin/pending</code>). '담당 아님' 질문은 빼고, 질문 문장은 이름·학번·전화번호 형태를 가린 문장을 씁니다.</li>
+<li>발송: Python <code>smtplib</code>(SMTP), 발송 전용 계정. 계정 비밀번호는 환경 변수 (2.6)</li>
+</ul>
+
+<h2 class="newpage">4. 요구사항 추적</h2>
+<table>
+<thead>
+<tr>
+<th>요구사항</th>
+<th>API·작업</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>FR-001~005, 022, 023</td>
+<td>1-2 질문하기</td>
+</tr>
+<tr>
+<td>FR-006</td>
+<td>1-4 추천 질문</td>
+</tr>
+<tr>
+<td>FR-007</td>
+<td>1-2 응답의 <code>sources[].source_url</code></td>
+</tr>
+<tr>
+<td>FR-014, 016</td>
+<td>3 수집 작업, 2-10 보충 문서, 2-12 수집 현황</td>
+</tr>
+<tr>
+<td>FR-019</td>
+<td>이 문서 전체 (사용자 API <code>/api/v1</code>와 관리 API <code>/admin/api</code> 분리)</td>
+</tr>
+<tr>
+<td>FR-020</td>
+<td>1-3 마감 일정</td>
+</tr>
+<tr>
+<td>FR-021</td>
+<td>기기 로컬 알림 (API 없음, 1-2 <code>schedule</code>과 1-3 데이터 사용)</td>
+</tr>
+<tr>
+<td>FR-024, 025</td>
+<td>2-4, 2-5, 2-8, 2-13</td>
+</tr>
+<tr>
+<td>FR-027</td>
+<td>1-2 <code>clarify</code></td>
+</tr>
+<tr>
+<td>FR-028</td>
+<td>1-2 처리 5단계</td>
+</tr>
+<tr>
+<td>FR-029, 030</td>
+<td>2-6, FCM 데이터 메시지, 1-5</td>
+</tr>
+<tr>
+<td>FR-031</td>
+<td>3 요약 메일</td>
+</tr>
+<tr>
+<td>FR-032</td>
+<td>2-9</td>
+</tr>
+<tr>
+<td>FR-033</td>
+<td>2-1, 2-2, 2-3</td>
+</tr>
+<tr>
+<td>FR-008, 009</td>
+<td>기기 저장 (API 없음)</td>
+</tr>
+</tbody>
+</table>
+<h2>5. 정할 것 (개발 전)</h2>
+<table>
+<thead>
+<tr>
+<th>항목</th>
+<th>상태</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>발송 전용 메일 계정 (Gmail 앱 비밀번호 또는 학교 메일 SMTP)</td>
+<td>팀 결정 필요. 2-1·요약 메일이 이 계정을 씀</td>
+</tr>
+<tr>
+<td>근거 유무를 가르는 유사도 기준값</td>
+<td>테스트 질문셋 80개로 평가해 정함 (FR-002)</td>
+</tr>
+<tr>
+<td>외부 접속 주소 (시연 기간 터널 서비스)</td>
+<td>개발 단계에서 확인. 앱의 서버 주소와 요약 메일 링크에 들어감</td>
+</tr>
+</tbody>
+</table></body></html>

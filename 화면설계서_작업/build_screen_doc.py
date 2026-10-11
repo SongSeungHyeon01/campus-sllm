@@ -590,6 +590,9 @@ def main(template, img_dir, out):
         for sh in s.shapes:
             if sh.shape_type == 17 and sh.left and sh.left > E(12.5) and sh.top < E(0.5):
                 set_shape_text(sh, str(no))
+    # 양식의 일부 슬라이드는 숨김(show="0")으로 되어 있어 PDF·슬라이드 쇼에서 빠지므로 모두 표시한다
+    for s in prs.slides:
+        s._element.attrib.pop("show", None)
     prs.save(out)
     print("saved", out, "slides", len(order))
 
