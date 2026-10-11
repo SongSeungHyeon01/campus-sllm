@@ -97,7 +97,8 @@ doc = f"""<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>{tit
 <body><div class="cover"><span class="tag">캡스톤디자인 1조 · 물어봐 캠퍼스</span><h1>{title}</h1></div>
 <div class="meta">{meta_html}</div>{html}</body></html>"""
 
-html_path = out_pdf.with_suffix(".html")
+import tempfile
+html_path = Path(tempfile.gettempdir()) / (out_pdf.stem + ".html")  # 중간 HTML은 임시 폴더에 둔다
 html_path.write_text(doc, encoding="utf-8")
 edge = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
 subprocess.run([edge, "--headless=new", "--disable-gpu", "--no-pdf-header-footer",
