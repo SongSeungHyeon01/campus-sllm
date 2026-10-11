@@ -1,0 +1,16 @@
+<resources>
+    <string name="app_name">물어봐 캠퍼스</string>
+    <string name="hint_question">궁금한 것을 물어보세요</string>
+    <string name="send">전송</string>
+    <string name="welcome">안녕하세요! 유원대학교 학사일정, 학사·장학 공지, 통학버스, 동아리를 물어보세요.\n예) \"수강정정 언제까지야?\", \"아산캠 주말 통학버스 시간 알려줘\"</string>
+    <string name="loading">답변을 찾고 있어요…</string>
+    <string name="error_network">서버에 연결하지 못했어요. 눌러서 다시 시도해 주세요.</string>
+    <string name="campus_yeongdong">영동캠퍼스</string>
+    <string name="campus_asan">아산캠퍼스</string>
+    <string name="menu_campus">캠퍼스 바꾸기</string>
+    <string name="menu_server">서버 주소</string>
+    <string name="server_hint">예: http://192.168.0.10:8000/</string>
+    <string name="ok">확인</string>
+    <string name="cancel">취소</string>
+    <string name="pending_note">↪ 학과 조교에게 전달됨</string>
+</resources>

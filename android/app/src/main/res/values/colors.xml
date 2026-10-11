@@ -1,0 +1,10 @@
+<resources>
+    <color name="navy">#1F3A5F</color>
+    <color name="ink">#22262E</color>
+    <color name="muted">#5F6773</color>
+    <color name="line">#D5DBE3</color>
+    <color name="tint">#F3F5F8</color>
+    <color name="user_bubble">#E4E8EE</color>
+    <color name="accent">#C8553D</color>
+    <color name="white">#FFFFFF</color>
+</resources>

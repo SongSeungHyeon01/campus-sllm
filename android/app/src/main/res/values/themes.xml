@@ -1,0 +1,9 @@
+<resources>
+    <style name="Theme.AskCampus" parent="Theme.Material3.Light.NoActionBar">
+        <item name="colorPrimary">@color/navy</item>
+        <item name="colorOnPrimary">@color/white</item>
+        <item name="colorSecondary">@color/accent</item>
+        <item name="android:colorBackground">@color/white</item>
+        <item name="android:statusBarColor">@color/navy</item>
+    </style>
+</resources>

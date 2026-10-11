@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}답변 대기{% endblock %}
+{% block main %}
+<h1>답변 대기</h1>
+<p class="sub">앱이 학교 자료에서 답을 찾지 못해 자동으로 등록된 질문입니다. 같은 질문 수가 많은 순입니다.</p>
+<div class="cards">
+  <div class="card"><div class="k">오늘 질문</div><div class="v">{{ stats.n or 0 }}건</div></div>
+  <div class="card"><div class="k">답변 대기</div><div class="v">{{ rows|length }}건</div></div>
+  <div class="card"><div class="k">평균 응답</div><div class="v">{{ '%.1f'|format((stats.ms or 0) / 1000) }}초</div></div>
+</div>
+{% if rows %}
+<table>
+  <tr><th>질문</th><th style="width:90px">같은 질문</th><th style="width:110px">카테고리</th><th style="width:120px">처음 들어온 날</th><th style="width:200px">처리</th></tr>
+  {% for r in rows %}
+  <tr>
+    <td>{{ r.question }}</td>
+    <td>{{ r.question_count }}건</td>
+    <td>{{ r.category or '-' }}</td>
+    <td>{{ r.first_asked_at[:10] }}</td>
+    <td class="row-actions">
+      <a class="btn primary" href="/admin/pending/{{ r.pending_id }}">답변 작성</a>
+      <form method="post" action="/admin/pending/{{ r.pending_id }}/not-mine"><button class="btn ghost" type="submit">담당 아님</button></form>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="empty">답변을 기다리는 질문이 없습니다.</p>
+{% endif %}
+<p class="notice">질문은 이름·학번·전화번호 형태를 가린 문장만 저장합니다. 30일 동안 답변이 없으면 만료됩니다.</p>
+{% endblock %}

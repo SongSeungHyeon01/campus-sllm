@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}로그인{% endblock %}
+{% block body %}
+<div style="max-width:420px;margin:12vh auto;padding:32px;border:1px solid var(--line);border-radius:14px">
+  <h1>물어봐 캠퍼스 답변·운영 관리</h1>
+  <p class="sub">학과 조교·관리자 전용</p>
+  {% if no_password %}
+  <div class="notice">서버에 ASK_ADMIN_PASSWORD가 설정되지 않아 로그인할 수 없습니다. 서버를 실행할 때 환경 변수로 비밀번호를 정해 주세요.</div>
+  {% endif %}
+  {% if error %}<div class="notice" style="color:var(--accent)">비밀번호가 맞지 않습니다.</div>{% endif %}
+  <form method="post" action="/admin/login">
+    <label for="pw">비밀번호</label>
+    <input id="pw" type="password" name="password" autofocus required>
+    <div style="margin-top:20px"><button class="btn primary" type="submit" style="width:100%;padding:11px">로그인</button></div>
+  </form>
+  <p class="notice">MVP 임시 로그인입니다. 이메일 인증 코드 로그인(FR-033)은 메일 발송 계정을 정한 뒤 붙입니다.</p>
+</div>
+{% endblock %}

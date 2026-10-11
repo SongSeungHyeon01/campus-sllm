@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}FAQ 관리{% endblock %}
+{% block main %}
+<h1>FAQ 관리</h1>
+<p class="sub">학과 조교가 등록한 답변입니다. 앱은 같은 질문에 이 답변을 '학과 조교 답변 · 등록일' 출처로 보여 줍니다.</p>
+{% if done %}<div class="ok">답변을 등록했습니다. 지금부터 같은 질문에 이 답변으로 답합니다.</div>{% endif %}
+{% if rows %}
+<table>
+  <tr><th>질문</th><th>답변</th><th style="width:100px">카테고리</th><th style="width:80px">답한 횟수</th><th style="width:110px">등록일</th></tr>
+  {% for r in rows %}
+  <tr><td>{{ r.question }}</td><td>{{ r.answer }}</td><td>{{ r.category }}</td><td>{{ r.ask_count }}</td><td>{{ r.created_at[:10] }}</td></tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="empty">아직 등록된 FAQ가 없습니다.</p>
+{% endif %}
+{% endblock %}

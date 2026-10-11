@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}답변 작성{% endblock %}
+{% block main %}
+<h1>답변 작성</h1>
+<p class="sub">같은 질문 {{ row.question_count }}건 · 처음 들어온 날 {{ row.first_asked_at[:10] }} · 카테고리 {{ row.category or '미정' }}</p>
+<form method="post" action="/admin/pending/{{ row.pending_id }}/answer">
+  <label for="q">학생 질문 (대표 문장, 100자 이내로 다듬어 FAQ 질문으로 저장)</label>
+  <input id="q" type="text" name="question" maxlength="100" value="{{ row.question[:100] }}" required>
+  <label for="a">답변</label>
+  <textarea id="a" name="answer" required placeholder="학과장·교무처 등에서 전달받은 기준으로 작성해 주세요."></textarea>
+  <div style="display:flex;gap:16px">
+    <div style="flex:1">
+      <label for="c">카테고리</label>
+      <select id="c" name="category">
+        {% for c in categories %}<option {{ 'selected' if c == row.category }}>{{ c }}</option>{% endfor %}
+      </select>
+    </div>
+    <div style="flex:1">
+      <label for="campus">캠퍼스</label>
+      <select id="campus" name="campus">
+        <option value="">공통</option>
+        <option {{ 'selected' if row.campus == '영동' }}>영동</option>
+        <option {{ 'selected' if row.campus == '아산' }}>아산</option>
+      </select>
+    </div>
+  </div>
+  <div class="notice">등록하면 승인 없이 바로 FAQ DB에 저장·재색인되고, 이후 같은 질문에는 이 답변으로 답합니다.
+    (질문했던 기기 알림(FR-030)은 MVP에서 빠져 있습니다.)</div>
+  <div style="display:flex;gap:8px;justify-content:flex-end">
+    <a class="btn ghost" href="/admin">취소</a>
+    <button class="btn primary" type="submit">등록</button>
+  </div>
+</form>
+<form method="post" action="/admin/pending/{{ row.pending_id }}/not-mine" style="margin-top:12px;text-align:right">
+  <button class="btn ghost" type="submit">담당 아님</button>
+</form>
+{% endblock %}
