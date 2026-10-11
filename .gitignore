@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+ask-campus/data/raw/
+
+# 설문 원본 응답 (학번·전화번호 포함)
+*사전조사 설문지*.csv
+
+# Office 임시·잠금 파일
+~$*

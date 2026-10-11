@@ -1,0 +1,7 @@
+pyhwp
+six
+pywin32
+matplotlib
+pymupdf
+lxml
+pillow
