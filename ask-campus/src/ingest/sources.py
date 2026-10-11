@@ -103,8 +103,12 @@ def buses(f: Fetcher) -> list[Chunk]:
         content = cms_content(f.get(url))
         notes = [ln for ln in text_lines(content) if "운행" in ln and len(ln) < 80][:3]
         for t_i, table in enumerate(content.find_all("table")):
+            # 표 이름은 바로 위 제목(h3~h5)을 쓴다. caption은 표마다 같거나 틀린 경우가 있었음
+            # (아산 주말 페이지의 '주말/공휴일'·'방학중' 두 표가 같은 caption, 영동 평일 표 caption은 '금요일만 운행…')
+            heading = table.find_previous(["h3", "h4", "h5"])
             caption = table.find("caption")
-            label = clean(caption.get_text(" ")) if caption else f"시간표 {t_i + 1}"
+            label = (clean(heading.get_text(" ")) if heading else
+                     clean(caption.get_text(" ")) if caption else f"시간표 {t_i + 1}")
             lines = []
             for rec in table_records(table):
                 cells = [f"{k}: {v}" for k, v in rec if v and v != k]
