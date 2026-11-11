@@ -13,3 +13,6 @@ ask-campus/data/
 # Claude Code 개인 설정·상태 (공유하지 않음)
 .claude/settings.local.json
 .omc/
+
+# 다른 학생의 계획서 예시 (학번·이름 포함, 각자 PC에만 보관)
+문서/01_계획서/예시*.pdf
