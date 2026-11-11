@@ -9,7 +9,7 @@ from . import config
 
 @lru_cache(maxsize=1)
 def embedder() -> SentenceTransformer:
-    if _cuda():
+    if _cuda() and config.EMBED_DEVICE != "cpu":    # cpu: 큰 sLLM을 bf16으로 시험할 때 GPU 자리 확보
         import torch
         # fp16으로 올려 VRAM을 아낀다 (sLLM과 같은 8GB GPU를 나눠 씀)
         return SentenceTransformer(config.EMBED_MODEL, device="cuda", model_kwargs={"dtype": torch.float16})

@@ -10,7 +10,9 @@ CHUNKS_JSONL = DATA / "chunks.jsonl"
 
 EMBED_MODEL = os.getenv("ASK_EMBED_MODEL", "nlpai-lab/KURE-v1")
 LLM_MODEL = os.getenv("ASK_LLM_MODEL", "kakaocorp/kanana-1.5-2.1b-instruct-2505")
-USE_LLM = os.getenv("ASK_USE_LLM", "1") == "1"       # 0이면 sLLM 없이 근거 문장만 돌려줌 (GPU 없는 PC에서 시험용)
+EMBED_DEVICE = os.getenv("ASK_EMBED_DEVICE", "cuda")  # "cpu"면 KURE를 CPU에서 돌림
+LLM_QUANT =os.getenv("ASK_LLM_QUANT", "")          # ""(bf16) | "4bit" | "8bit"
+USE_LLM =os.getenv("ASK_USE_LLM", "1") == "1"       # 0이면 sLLM 없이 근거 문장만 돌려줌 (GPU 없는 PC에서 시험용)
 
 TOP_K = 5                 # 벡터 검색 개수 (FR-002)
 CONTEXT_K = 3             # sLLM에 넘기는 근거 수, 출처 표시도 최대 3개 (FR-004)

@@ -2,6 +2,8 @@
 
 개발 중 실제로 만난 오류와 해결 과정입니다. 문서(요구사항 정의서·화면설계서) 수정 내역은 `오류사항 보고서\`에 따로 있습니다.
 
+- [2026-11-10] 다른 표현의 근거없음 답이 답변 대기에 안 올라감 + 빈 연락처 '010-'·맺음말 노출 — 판정 문구 목록·후처리 부족 (해결됨) → 2026-11-10_not-found-phrase-and-answer-cleanup.md
+- [2026-11-10] Kanana-2 다운로드가 64MB에서 멈춤 — Xet 전송 문제로 추정 (우회함: HF_HUB_DISABLE_XET=1) → 2026-11-10_hf-download-stall-xet.md
 - [2026-10-12] '가장 빠른 버스'에 08:00 대신 10:15 — 시간표 청크 일부만 검색 + 현재 시각 없음 + 2B 모델의 시간 비교 한계 (해결됨: 시간표 조회는 코드가 답함) → 2026-10-12_bus-next-departure-wrong.md
 - [2026-10-12] Git Bash curl 한글 깨짐 — 시험 도구 인코딩 문제, 서버는 정상 (우회함) → 2026-10-12_curl-korean-encoding.md
 - [2026-10-12] Android 빌드 실패 — JBR Java 25 / local.properties 경로 이스케이프 (해결됨) → 2026-10-12_android-build-jdk25-sdk-path.md
