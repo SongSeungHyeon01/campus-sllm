@@ -10,7 +10,7 @@ import win32com.client as win32
 from PIL import Image
 
 IMAGES = {
-    "arch": r"C:\dev\Campus sLLM\diagram_arch.png",
+    "arch": r"C:\dev\Campus sLLM\요구사항정의서_그림\diagram_arch.png",
     "usecase": "diagram_usecase.png",
     "scr001": "wire_scr001_main.png",
     "scr002": "wire_scr002_category.png",
