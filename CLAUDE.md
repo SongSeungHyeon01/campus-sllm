@@ -23,7 +23,7 @@
    - 비밀번호·키(`ASK_ADMIN_PASSWORD`, `ASK_SECRET` 등)는 환경변수로만 씁니다. 파일에 적지 않습니다.
    - `문서/02_사전조사/Campus sLLM 사전조사 설문지.csv`는 응답자 학번·전화번호가 들어 있습니다. 열어서 내용을 출력하거나 커밋하지 않습니다. 개인정보를 지운 사본은 `사전조사_작업/`에 있습니다.
    - 학교 로그인 계정·비밀번호를 대화에 받지 않습니다. 로그인이 필요한 학교 페이지는 수집하지 않습니다.
-2. **커밋 메시지에 `Co-Authored-By: Claude`나 "Generated with Claude Code" 줄을 넣지 않는다.**
+2. **커밋 메시지는 `CONTRIBUTING.md`의 형식(`<타입>: <요약>`)을 따르고, `Co-Authored-By: Claude`나 "Generated with Claude Code" 줄을 넣지 않는다.** master에 직접 push하지 않고 브랜치 → PR로 올린다.
 3. **오류가 나면 `error-report` 스킬로 `docs/오류보고서/`에 기록한다.** 채팅에서 설명하고 끝내지 않습니다.
 4. **설계 문서(HWP·PPTX)는 직접 고치지 않는다.**
    - 각 `*_작업/` 폴더의 생성 스크립트를 고친 뒤 다시 빌드합니다.
