@@ -1,0 +1,2 @@
+# 훅 스크립트는 LF로 고정 (CRLF면 sh가 실행하지 못함)
+.githooks/* text eol=lf

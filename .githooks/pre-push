@@ -1,0 +1,13 @@
+#!/bin/sh
+# git-privacy-guard 리포 훅 (pre-push): 개인정보·비밀값이 커밋/푸시되기 전에 막는다.
+SCAN="$(git rev-parse --show-toplevel)/.claude/skills/git-privacy-guard/scripts/privacy_scan.py"
+PY=
+for c in python3 python py; do
+  if "$c" -c "import sys" >/dev/null 2>&1; then PY=$c; break; fi
+done
+if [ -z "$PY" ]; then
+  echo "[privacy] 파이썬을 찾지 못해 검사할 수 없습니다. 안전을 위해 중단합니다." >&2
+  exit 1
+fi
+INPUT=$(cat)
+printf '%s\n' "$INPUT" | PYTHONIOENCODING=utf-8 "$PY" "$SCAN" push || exit 1
