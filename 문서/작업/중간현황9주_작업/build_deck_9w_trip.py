@@ -20,7 +20,7 @@ from pptx.oxml.ns import qn
 from pptx.util import Inches, Pt
 
 HERE = Path(__file__).resolve().parent
-ROOT = HERE.parents[1]
+ROOT = HERE.parents[2]   # 문서/작업/<폴더> → 리포 최상위
 sys.path.insert(0, str(HERE))
 from build_deck_9w import QNA, SLIDES as BASE  # noqa: E402  (대본 재사용)
 

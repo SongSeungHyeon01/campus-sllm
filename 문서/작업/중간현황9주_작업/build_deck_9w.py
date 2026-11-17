@@ -13,7 +13,7 @@ from pptx.enum.shapes import MSO_SHAPE
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.util import Inches
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]   # 문서/작업/<폴더>/이 파일 → 리포 최상위
 sys.path.insert(0, str(ROOT / "DB모델링_작업"))
 from build_db_doc import INK, LINE, MUTED, MX, NAVY, SH, SW, TINT, WHITE, badge, box, new, rgb, table, text, title  # noqa: E402
 
