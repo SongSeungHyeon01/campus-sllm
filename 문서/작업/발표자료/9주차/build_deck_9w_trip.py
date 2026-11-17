@@ -20,15 +20,15 @@ from pptx.oxml.ns import qn
 from pptx.util import Inches, Pt
 
 HERE = Path(__file__).resolve().parent
-ROOT = HERE.parents[2]   # 문서/작업/<폴더> → 리포 최상위
+ROOT = HERE.parents[3]   # 문서/작업/발표자료/<주차> → 리포 최상위
 sys.path.insert(0, str(HERE))
 from build_deck_9w import QNA, SLIDES as BASE  # noqa: E402  (대본 재사용)
 
 # 템플릿은 각자 PC에 있는 파일 경로를 환경 변수로 준다 (리포에는 넣지 않음)
 TEMPLATE = Path(os.environ.get("TRIP_TEMPLATE", Path.home() / "트립버짓_해커톤_발표_v6.pptx"))
-FIG = ROOT / "문서" / "07_진행보고서" / "그림_중간현황"
-OUT_PPTX = ROOT / "문서" / "07_진행보고서" / "중간현황_9주차_발표자료_v2.pptx"
-OUT_MD = ROOT / "문서" / "07_진행보고서" / "중간현황_9주차_발표대본.md"
+FIG = ROOT / "문서" / "그림" / "진행보고서"
+OUT_PPTX = ROOT / "문서" / "보고서" / "진행보고서" / "중간현황_9주차_발표자료_v2.pptx"
+OUT_MD = ROOT / "문서" / "보고서" / "진행보고서" / "중간현황_9주차_발표대본.md"
 
 I = Inches
 P, P2, P3 = RGBColor(0x5E, 0x2B, 0xB8), RGBColor(0xB7, 0x9C, 0xFF), RGBColor(0xE6, 0xDC, 0xFF)

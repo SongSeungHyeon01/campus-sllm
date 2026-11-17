@@ -1,14 +1,14 @@
 """화면설계서용 추가 와이어프레임 9장 (요구사항정의서 그림과 같은 스타일).
 
 사용: python screens_extra.py <out_dir>
-요구사항정의서_작업/figures.py의 도구(box, badge, phone, appbar, chips, notes)를 가져다 쓴다.
+작업/요구사항정의서/figures.py의 도구(box, badge, phone, appbar, chips, notes)를 가져다 쓴다.
 figures.py를 import하면 기존 7장도 같은 폴더에 다시 그려진다.
 """
 import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parent / "요구사항정의서_작업"))
+sys.path.insert(0, str(HERE.parent / "요구사항정의서"))
 import figures as F  # noqa: E402  (draws the base figures into sys.argv[1] too)
 from figures import GRAY, MID, OUT, PH, PW, Rectangle, appbar, badge, box, chips, notes, phone, plt  # noqa: E402
 

@@ -12,7 +12,7 @@ import win32com.client as win32
 from PIL import Image
 
 IMAGES = {
-    "arch": str(Path(__file__).resolve().parents[1] / "요구사항정의서_그림" / "diagram_arch.png"),
+    "arch": str(Path(__file__).resolve().parents[2] / "그림" / "요구사항정의서" / "diagram_arch.png"),
     "usecase": "diagram_usecase.png",
     "scr001": "wire_scr001_main.png",
     "scr002": "wire_scr002_category.png",
