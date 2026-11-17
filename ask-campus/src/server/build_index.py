@@ -1,4 +1,4 @@
-"""data/chunks.jsonl을 SQLite chunk 테이블과 Chroma 'chunks' 컬렉션에 넣는다 (FR-016).
+"""data/chunks.jsonl(+ chunks_login.jsonl)을 SQLite chunk 테이블과 Chroma 'chunks' 컬렉션에 넣는다 (FR-016).
 
 사용 (ask-campus 폴더에서): .venv/Scripts/python -m src.server.build_index
 다시 실행하면 청크를 새로 넣는다 (FAQ·답변 대기는 그대로 둠).
@@ -10,7 +10,11 @@ from . import config, db, index
 
 def main():
     db.init()
-    rows = [json.loads(line) for line in config.CHUNKS_JSONL.open(encoding="utf-8")]
+    rows = []
+    # chunks.jsonl(공개 페이지) + chunks_login.jsonl(FAQ·Q&A) + chunks_site.jsonl(사이트 전체·학과), 있는 것만
+    for path in (config.CHUNKS_JSONL, config.CHUNKS_LOGIN_JSONL, config.CHUNKS_SITE_JSONL):
+        if path.exists():
+            rows += [json.loads(line) for line in path.open(encoding="utf-8") if line.strip()]
     rows = list({r["chunk_id"]: r for r in rows}.values())   # 같은 글이 두 번 수집된 경우 하나만
     ts = db.now()
     with db.connect() as con:

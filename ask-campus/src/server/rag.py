@@ -8,7 +8,7 @@
 """
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import numpy as np
 
@@ -126,8 +126,24 @@ def _stop_of(key: str, question: str) -> str:
     tokens = [t for t in re.sub(r"\(.*?\)", " ", key).split() if t]
     if tokens and tokens[-1] in ("출발", "도착") and len(tokens) > 1:
         tokens = tokens[:-1]
-    names = [n for n in ("".join(tokens[-2:]), tokens[-1] if tokens else "") if len(n) >= 2 and n in question]
-    return max(names, key=len) if names else ""
+    names = [n for n in ("".join(tokens[-2:]), tokens[-1] if tokens else "") if len(n) >= 2]
+    hit = [n for n in names if any(a in question for a in _aliases(n))]
+    return max(hit, key=len) if hit else ""
+
+
+def _aliases(name: str) -> list[str]:
+    """'두정역' → ['두정역', '두정'], '천안터미널' → ['천안터미널', '터미널'].
+
+    11/18: '두정에서 가장빠른 통학버스'를 정류장으로 못 알아봐 sLLM이 표를 읽다 운행 종료 칸을 놓쳤다.
+    '캠퍼스'는 줄이지 않는다 ('아산'은 캠퍼스 이름으로 거의 모든 질문에 나옴).
+    """
+    out = [name]
+    for suffix in ("역", "아파트", "마트"):
+        if name.endswith(suffix) and len(name) - len(suffix) >= 2:
+            out.append(name[: -len(suffix)])
+    if name.endswith("터미널") and name != "터미널":
+        out.append("터미널")
+    return out
 
 
 def _bus_intent(question: str) -> bool:
@@ -163,11 +179,12 @@ def _timetable_query(question: str, table: str, now: datetime) -> dict | None:
         return None                      # 질문에 정류장이 없으면 일반 경로(sLLM)로
     found.sort()
     _, explicit_day = _day_type(question, now)
-    if "첫차" in question or "첫 차" in question:
+    compact = question.replace(" ", "")          # '가장빠른'처럼 붙여 써도 알아보게
+    if "첫차" in compact:
         mode = "first"
-    elif "막차" in question or "마지막" in question:
+    elif "막차" in compact or "마지막" in compact:
         mode = "last"
-    elif any(h in question for h in _NEXT_HINTS):
+    elif any(h.replace(" ", "") in compact for h in _NEXT_HINTS):
         mode = "first" if explicit_day else "next"   # 오늘이 아닌 날을 물으면 지금 시각과 비교하지 않음
     else:
         mode = "all"
@@ -188,7 +205,8 @@ def _timetable_answer(q: dict, header: str) -> str:
     if not found:
         text = f"{stop} {d} 시간이 이 시간표에 없습니다."
     elif q["mode"] == "next" and up:
-        text = f"지금({now:%H:%M}) 기준으로 {stop}에서 가장 빠른 {d} 버스는 {up[0][1]} ({up[0][2]})입니다."
+        # 11/18 사용자 요청: '지금(03:13) 기준으로' 같은 현재 시각 표시는 빼고 답만 보여줌
+        text = f"{stop}에서 가장 빠른 {d} 버스는 {up[0][1]} ({up[0][2]})입니다."
         if len(up) > 1:
             text += f" 다음 차는 {up[1][1]} ({up[1][2]})입니다."
     elif q["mode"] == "next":
@@ -204,7 +222,7 @@ def _timetable_answer(q: dict, header: str) -> str:
         times = list(dict.fromkeys(f[1] for f in found))   # 같은 시간이 여러 호차로 나오면 한 번만
         more = f" 외 {len(times) - 20}회" if len(times) > 20 else ""
         text = f"{stop} {d} 버스 시간은 {', '.join(times[:20])}{more}입니다."
-    return text + f"\n기준 시간표: {_table_name(header)}. 도착 시간은 교통 상황에 따라 달라질 수 있습니다."
+    return text + f"\n\n기준 시간표: {_table_name(header)}. 도착 시간은 교통 상황에 따라 달라질 수 있습니다."
 
 
 def register_pending(question: str, category: str | None, campus: str | None, qvec: list[float]) -> int:
@@ -221,6 +239,59 @@ def register_pending(question: str, category: str | None, campus: str | None, qv
             "INSERT INTO pending_question (question, category, campus, first_asked_at, last_asked_at, expires_at, vec) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)", (masked, category, campus, ts, ts, db.expires_from(ts), _blob(qvec)))
         return cur.lastrowid
+
+
+_DATE = re.compile(r"(20\d{2})\s*[.\-년]\s*(\d{1,2})\s*[.\-월]\s*(\d{1,2})")
+_WHEN = ("언제", "날짜", "기간", "일정", "며칠", "몇 일", "마감", "까지", "시작")
+
+
+def _dates(text: str) -> list[str]:
+    out = []
+    for y, m, d in _DATE.findall(text):
+        if 1 <= int(m) <= 12 and 1 <= int(d) <= 31:
+            out.append(f"{y}-{int(m):02d}-{int(d):02d}")
+    return out
+
+
+def _rerank(question: str, hits: list[dict], now: datetime) -> list[dict]:
+    """날짜를 묻는 질문이면 이미 지난 일정은 내리고 다가오는 일정은 올린다. 대학원 자료는 '대학원'을 물을 때만.
+
+    11/18: 사이트 전체를 넣었더니 '학위수여식 언제?'에 지난 2025학년도 행사 페이지가 1위로 올라오고,
+    학부 질문에 대학원 학칙·등록 안내가 근거로 들어갔다.
+    """
+    if "대학원" not in question:
+        hits = [h for h in hits if not h["meta"].get("title", "").startswith("대학원:")]
+    if not any(w in question for w in _WHEN):
+        return hits
+    # 반년 넘게 지난 일정만 내린다. 올해 이미 지난 일정(하계 계절학기, 2학기 수강정정)을 묻는 질문도 있어서
+    today, stale = now.strftime("%Y-%m-%d"), (now - timedelta(days=180)).strftime("%Y-%m-%d")
+
+    def adjusted(h):
+        ds = _dates(h["meta"].get("title", "") + " " + h["document"][:400])
+        if not ds:
+            return h["score"]
+        if max(ds) >= today:
+            return h["score"] + 0.03
+        return h["score"] - 0.08 if max(ds) < stale else h["score"]
+    return sorted(hits, key=adjusted, reverse=True)
+
+
+def _ranked_hits(qvec: list[float], where: dict | None, question: str = "") -> list[dict]:
+    """공식 자료(공지·학사일정·통학버스·동아리·FAQ)를 먼저, 학생 Q&A는 최대 1개만 붙인다.
+
+    11/18: Q&A를 넣었더니 질문 모양이 비슷한 Q&A가 상위 1~3위를 다 차지해서,
+    날짜가 적힌 학사일정·공지가 sLLM에 못 갔다 (계절학기 기간, 조기졸업 전화번호 등).
+    """
+    def search(cond):
+        w = {"$and": [where, cond]} if where else cond
+        hits = [h for h in index.search("chunks", qvec, config.TOP_K * 2, w) if h["score"] >= config.MIN_SCORE]
+        return _rerank(question, hits, _now())[:config.TOP_K]
+
+    official = search({"category": {"$ne": "Q&A"}})
+    qna = search({"category": "Q&A"})
+    top = official[:config.CONTEXT_K - 1] + qna[:1]
+    rest = official[config.CONTEXT_K - 1:] + qna[1:]
+    return top + rest           # 앞에서부터 CONTEXT_K개가 sLLM에 넘어감
 
 
 def ask(question: str, category: str | None = None, campus: str | None = None) -> dict:
@@ -243,7 +314,7 @@ def ask(question: str, category: str | None = None, campus: str | None = None) -
         if category:
             cond = {"category": category}
             where = {"$and": [where, cond]} if where else cond
-        hits = [h for h in index.search("chunks", qvec, config.TOP_K, where) if h["score"] >= config.MIN_SCORE]
+        hits = _ranked_hits(qvec, where, question)
         if (not hits or hits[0]["meta"].get("category") != "통학버스") and _bus_intent(question):
             # 버스 질문인데 일반 검색에서 시간표가 기준값을 못 넘으면, 통학버스 청크만 따로 찾는다.
             # 시간표에 실제로 있는 정류장이 질문에 나올 때만 쓴다 (아래 _timetable_query가 확인)

@@ -1,4 +1,4 @@
-"""sLLM 답변 생성 (FR-003). Kanana 1.5 2.1B Instruct를 GPU에서 bf16으로 띄운다 (약 4.5GB)."""
+"""sLLM 답변 생성 (FR-003). A.X 4.0 Light(7B)를 GPU에서 4bit로 띄운다 (약 5~6GB)."""
 import re
 from functools import lru_cache
 
@@ -15,7 +15,10 @@ SYSTEM = (
     "4. 한국어 존댓말로 1~4문장 안에서 질문에 필요한 내용만 답합니다. 자료 번호, 인사말, '추가로 궁금한 점' 같은 맺음말은 쓰지 않습니다.\n"
     "5. 지금은 {today}입니다. '오늘', '이번 주', '지금', '방금', '다음', '가장 빠른' 같은 표현은 이 시각을 기준으로 판단합니다.\n"
     "6. 시간표에서 '가장 빠른'·'다음'·'지금 탈 수 있는' 차를 물으면, 질문한 정류장의 시간 중 지금 시각 이후 가장 가까운 시간을 "
-    "회차·호차와 함께 답합니다. 이미 지난 시간은 답하지 않습니다."
+    "회차·호차와 함께 답합니다. 이미 지난 시간은 답하지 않습니다.\n"
+    "7. '[학생 Q&A]' 자료는 예전에 한 학생에게 한 답변입니다. 공지·학사일정·FAQ와 다르면 공지·학사일정·FAQ를 따르고, "
+    "특정 학생 개인의 사정에 대한 답변은 일반 안내처럼 쓰지 않습니다.\n"
+    "8. 같은 행사·일정이 여러 해 자료에 있으면, 질문에 연도가 없는 한 지금 이후의 가장 가까운 일정으로 답합니다."
 )
 
 
@@ -32,6 +35,9 @@ def _model():
             if config.LLM_QUANT == "4bit" else BitsAndBytesConfig(load_in_8bit=True))
     model = AutoModelForCausalLM.from_pretrained(
         config.LLM_MODEL, dtype=torch.bfloat16, device_map="cuda" if torch.cuda.is_available() else "cpu", **kw)
+    if config.LLM_ADAPTER:                      # LoRA 어댑터 (예: RAG 행동을 추가 학습한 어댑터)
+        from peft import PeftModel
+        model = PeftModel.from_pretrained(model, config.LLM_ADAPTER)
     model.eval()
     return tok, model
 
@@ -57,7 +63,9 @@ def is_not_found(text: str) -> bool:
 
 
 # "연락처: 010-"처럼 값이 비었거나 번호 앞자리만 남은 항목 (자료의 빈 칸을 그대로 옮긴 경우)
-_EMPTY_FIELD = re.compile(r"^[-·*\s]*[가-힣A-Za-z ]{1,12}\s*[:：]\s*(0\d{1,2}\s*-?\s*)?$")
+_EMPTY_FIELD = re.compile(r"^[-·*\s]*([가-힣A-Za-z ]{1,12}\s*[:：]\s*)?(0\d{1,2}[\s-]*)?$")
+# 11/18 기준값 0.55 시험: 한맥 연락처를 물으니 답 전체가 "010--"였다 (번호 앞자리만 남은 경우)
+_PHONE_STUB = re.compile(r"(?<![\d:.])0\d{1,2}\s*-+(?=\s*(?:$|[^\d\s]))", re.M)
 # 규칙 4에서 금지했는데도 붙는 맺음말. 짧은 줄에서만 지운다
 _CLOSING = re.compile(r"궁금한 (점|사항)|추가로 (궁금|문의)|문의 주세요|감사합니다|도움이 되(셨|었)|말씀해 주세요")
 _HTML = re.compile(r"</?[A-Za-z][^>]*>")
@@ -66,6 +74,7 @@ _HTML = re.compile(r"</?[A-Za-z][^>]*>")
 def _clean(text: str) -> str:
     """자료 형식을 따라 쓴 줄('[자료]', '■ …'), 빈 항목, 맺음말, HTML 태그를 지운다."""
     text = _HTML.sub("", text)
+    text = _PHONE_STUB.sub("", text)
     lines = []
     for ln in text.splitlines():
         s = ln.strip()
