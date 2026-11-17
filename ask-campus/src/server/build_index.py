@@ -11,8 +11,8 @@ from . import config, db, index
 def main():
     db.init()
     rows = []
-    # chunks.jsonl(공개 페이지) + chunks_login.jsonl(로그인 필요한 FAQ·Q&A, 있으면)
-    for path in (config.CHUNKS_JSONL, config.CHUNKS_LOGIN_JSONL):
+    # chunks.jsonl(공개 페이지) + chunks_login.jsonl(FAQ·Q&A) + chunks_site.jsonl(사이트 전체·학과), 있는 것만
+    for path in (config.CHUNKS_JSONL, config.CHUNKS_LOGIN_JSONL, config.CHUNKS_SITE_JSONL):
         if path.exists():
             rows += [json.loads(line) for line in path.open(encoding="utf-8") if line.strip()]
     rows = list({r["chunk_id"]: r for r in rows}.values())   # 같은 글이 두 번 수집된 경우 하나만

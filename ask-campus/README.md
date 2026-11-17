@@ -50,6 +50,7 @@ py -3.12 -m venv .venv
 ```powershell
 .venv\Scripts\python -m src.ingest.run --notice-pages 2   # 약 1~2분, data/chunks.jsonl
 .venv\Scripts\python -m src.ingest.run_login              # 선택. 약 5분, FAQ·Q&A → data/chunks_login.jsonl (.env에 학교 계정 필요)
+.venv\Scripts\python -m src.ingest.run_site               # 선택. 학교 사이트 전체 메뉴 + 학과·대학원 사이트 → data/chunks_site.jsonl
 .venv\Scripts\python -m src.server.build_index           # 두 파일을 함께 색인 → data/askcampus.db, data/chroma
 ```
 

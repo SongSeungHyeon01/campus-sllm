@@ -61,6 +61,12 @@ def rate_limited(key: str, per_minute: int = 20) -> bool:
     return len(hits) > per_minute
 
 
+@app.get("/", response_class=HTMLResponse)
+def chat_page(request: Request):
+    """시험용 웹 채팅 화면 (앱과 같은 /api/v1/ask 사용)."""
+    return TEMPLATES.TemplateResponse(request, "chat.html")
+
+
 @app.get("/api/v1/health")
 def health():
     with db.connect() as con:

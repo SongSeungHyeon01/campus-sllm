@@ -88,7 +88,7 @@
 {"id": "N08", "kind": "none", "domain": "학사", "style": "정식", "campus": "영동", "q": "간호학과 한 학기 등록금 얼마야?", "gold": null, "expect": null}
 {"id": "N09", "kind": "none", "domain": "시설", "style": "구어체", "campus": "아산", "q": "학교 와이파이 비번 알려줘", "gold": null, "expect": null}
 {"id": "N10", "kind": "none", "domain": "장학", "style": "정식", "campus": "아산", "q": "성적장학금 받으려면 평점 몇 점 넘어야 해?", "gold": null, "expect": null}
-{"id": "N11", "kind": "none", "domain": "학사", "style": "정식", "campus": "영동", "q": "휴학은 최대 몇 학기까지 할 수 있어?", "gold": null, "expect": null}
+{"id": "N11", "kind": "answer", "domain": "학사", "style": "정식", "campus": "영동", "q": "휴학은 최대 몇 학기까지 할 수 있어?", "gold": ["유원대: 학적변동"], "expect": ["4학기"], "note": "2026-11-18 사이트 전체 수집으로 학적변동 페이지에 답이 생겨 none에서 answer로 옮김 (id는 유지)"}
 {"id": "N12", "kind": "none", "domain": "학사", "style": "정식", "campus": "아산", "q": "계절학기 수강료는 학점당 얼마야?", "gold": null, "expect": null}
 {"id": "N13", "kind": "answer", "domain": "학사", "style": "구어체", "campus": "영동", "q": "군휴학 하려면 뭐 준비해야 됨?", "gold": ["Q&A: 군휴학 신청"], "expect": ["입영통지서"], "note": "2026-11-18 FAQ·Q&A 수집으로 자료에 답이 생겨 none에서 answer로 옮김 (id는 유지)"}
 {"id": "N14", "kind": "none", "domain": "행사", "style": "구어체", "campus": "아산", "q": "축제 연예인 라인업 나왔어?", "gold": null, "expect": null}

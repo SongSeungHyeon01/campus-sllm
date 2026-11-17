@@ -42,6 +42,7 @@ def _account() -> tuple[str, str]:
 
 
 def login(f: Fetcher) -> None:
+    """학교 홈페이지에 로그인해 f.session에 쿠키를 남긴다. 실패하면 LoginError (계정 값은 메시지에 넣지 않음)."""
     uid, pw = _account()
     f.get("/u1/login.do?auty=LOGIN")
     r = f.session.post(BASE_URL + "/custom/login/idLoginProc.do", timeout=f.timeout, allow_redirects=False,
@@ -55,6 +56,7 @@ def login(f: Fetcher) -> None:
 
 
 def mask(text: str, names: tuple[str, ...] = ()) -> str:
+    """작성자 이름(names)과 전화번호·학번·이메일 형태를 가린다. 이름은 '○○○', 나머지는 '***'."""
     for n in names:
         if n and len(n) >= 2:
             text = text.replace(n, "○○○")
@@ -74,6 +76,7 @@ def _text(node) -> str:
 
 
 def faq(f: Fetcher) -> list[Chunk]:
+    """커뮤니티 > FAQ를 10건씩 넘기며 질문·답 한 쌍을 청크 하나로 만든다 (로그인 필요)."""
     path, menu = FAQ
     out, offset = [], 0
     while True:

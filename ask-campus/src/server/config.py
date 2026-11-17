@@ -8,6 +8,7 @@ DB_PATH = Path(os.getenv("ASK_DB", DATA / "askcampus.db"))
 CHROMA_DIR = Path(os.getenv("ASK_CHROMA", DATA / "chroma"))
 CHUNKS_JSONL = DATA / "chunks.jsonl"
 CHUNKS_LOGIN_JSONL = DATA / "chunks_login.jsonl"    # 로그인 필요한 FAQ·Q&A (src/ingest/run_login.py)
+CHUNKS_SITE_JSONL = DATA / "chunks_site.jsonl"      # 학교 사이트 전체 메뉴 + 학과·대학원 사이트 (src/ingest/run_site.py)
 
 EMBED_MODEL = os.getenv("ASK_EMBED_MODEL", "nlpai-lab/KURE-v1")
 # 11/17 13개 모델 비교로 A.X 4.0 Light 4bit 채택 (docs/sLLM_모델비교.md). 7B라 bf16(약 15GB)은 8GB GPU에 안 들어감
