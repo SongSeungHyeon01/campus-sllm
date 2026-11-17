@@ -223,6 +223,23 @@ def register_pending(question: str, category: str | None, campus: str | None, qv
         return cur.lastrowid
 
 
+def _ranked_hits(qvec: list[float], where: dict | None) -> list[dict]:
+    """공식 자료(공지·학사일정·통학버스·동아리·FAQ)를 먼저, 학생 Q&A는 최대 1개만 붙인다.
+
+    11/18: Q&A를 넣었더니 질문 모양이 비슷한 Q&A가 상위 1~3위를 다 차지해서,
+    날짜가 적힌 학사일정·공지가 sLLM에 못 갔다 (계절학기 기간, 조기졸업 전화번호 등).
+    """
+    def search(cond):
+        w = {"$and": [where, cond]} if where else cond
+        return [h for h in index.search("chunks", qvec, config.TOP_K, w) if h["score"] >= config.MIN_SCORE]
+
+    official = search({"category": {"$ne": "Q&A"}})
+    qna = search({"category": "Q&A"})
+    top = official[:config.CONTEXT_K - 1] + qna[:1]
+    rest = official[config.CONTEXT_K - 1:] + qna[1:]
+    return top + rest           # 앞에서부터 CONTEXT_K개가 sLLM에 넘어감
+
+
 def ask(question: str, category: str | None = None, campus: str | None = None) -> dict:
     t0 = time.perf_counter()
     question = question.strip()
@@ -243,7 +260,7 @@ def ask(question: str, category: str | None = None, campus: str | None = None) -
         if category:
             cond = {"category": category}
             where = {"$and": [where, cond]} if where else cond
-        hits = [h for h in index.search("chunks", qvec, config.TOP_K, where) if h["score"] >= config.MIN_SCORE]
+        hits = _ranked_hits(qvec, where)
         if (not hits or hits[0]["meta"].get("category") != "통학버스") and _bus_intent(question):
             # 버스 질문인데 일반 검색에서 시간표가 기준값을 못 넘으면, 통학버스 청크만 따로 찾는다.
             # 시간표에 실제로 있는 정류장이 질문에 나올 때만 쓴다 (아래 _timetable_query가 확인)

@@ -8,7 +8,7 @@
 |---|---|---|
 | 학교 홈페이지 공개 페이지 수집 | FR-014, 015 | 학사·일반·장학 공지(게시판마다 최근 20건), 학사일정, 통학버스(영동·아산, 주말·방학 포함), 동아리현황. 요청 간격 1초 |
 | 임베딩·벡터 검색 | FR-002, 016 | KURE-v1 (fp16) + Chroma, 캠퍼스 필터 |
-| sLLM 근거 기반 답변 | FR-003, 004 | Kanana 1.5 2.1B Instruct (GPU bf16), 출처·메뉴 경로·원문 링크, 현재 날짜·요일·시각 전달 |
+| sLLM 근거 기반 답변 | FR-003, 004 | A.X 4.0 Light 7B (GPU 4bit), 출처·메뉴 경로·원문 링크, 현재 날짜·요일·시각 전달 |
 | 통학버스 시간표 조회 | FR-010 | 질문에 정류장 이름이 있으면 코드가 계산해 답함: 지금 이후 가장 빠른 차·다음 차, 첫차, 막차, 전체 시간. 평일/주말 시간표는 질문 → 오늘 요일 순으로 고름 |
 | 근거 없음 → 답변 대기 자동 등록 | FR-005, 028 | 기준값 미만이거나 sLLM이 "찾을 수 없습니다"라고 하면 등록, 비슷한 질문은 묶어 '같은 질문 수' 증가 |
 | 조교 답변 웹 → FAQ 즉시 반영 | FR-024, 025, 029 | 답변 대기 목록, 답변 작성, 담당 아님, FAQ 목록. 등록 즉시 같은·비슷한 질문에 '학과 조교 답변 · 등록일'로 답함 |
@@ -42,14 +42,15 @@ py -3.12 -m venv .venv
 .venv\Scripts\python -m pip install -r requirements.txt
 ```
 
-- GPU: NVIDIA 8GB 이상 (팀 노트북 RTX 5060 Laptop 8GB에서 확인). 모델 내려받기 약 7GB (KURE-v1 약 2.3GB, Kanana 약 4.5GB, 처음 실행 때 자동).
+- GPU: NVIDIA 8GB 이상 (팀 노트북 RTX 5060 Laptop 8GB에서 확인). 모델 내려받기 약 16GB (KURE-v1 약 2.3GB, A.X 4.0 Light 약 14GB, 처음 실행 때 자동). GPU에는 4bit로 올려서 둘이 합쳐 약 6.4GB.
 - GPU가 없는 PC에서는 `$env:ASK_USE_LLM="0"`으로 sLLM 없이 근거 문장만 돌려주게 할 수 있습니다 (시험용).
 
 ## 2. 수집과 색인
 
 ```powershell
 .venv\Scripts\python -m src.ingest.run --notice-pages 2   # 약 1~2분, data/chunks.jsonl
-.venv\Scripts\python -m src.server.build_index           # data/askcampus.db, data/chroma
+.venv\Scripts\python -m src.ingest.run_login              # 선택. 약 5분, FAQ·Q&A → data/chunks_login.jsonl (.env에 학교 계정 필요)
+.venv\Scripts\python -m src.server.build_index           # 두 파일을 함께 색인 → data/askcampus.db, data/chroma
 ```
 
 ## 3. 서버 실행

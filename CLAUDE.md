@@ -36,8 +36,8 @@
 
 | 결정 | 이유 |
 |---|---|
-| sLLM은 Kanana 1.5 2.1B Instruct 유지 | 2026-11-10 비교 시험(19문항)에서 Midm 2.0 Mini·Kanana-2 3B보다 정확. `scripts/model_compare.py` |
-| transformers 4.57.6 고정 | 5.x는 Kanana 1.5 설정(head_dim)을 거부함. `docs/오류보고서/2026-10-12_transformers5-kanana-config.md` |
+| sLLM은 A.X 4.0 Light (7B, 4bit) | 2026-11-17 13개 모델 × 108문항 비교에서 정답 62/63, 평균 2.1초, Apache-2.0. bf16은 약 15GB라 8GB GPU에 안 들어감. `docs/sLLM_모델비교.md` (이전: Kanana 1.5 2.1B) |
+| transformers 4.57.6 고정 | A.X 4bit를 이 버전으로 시험함. 원래는 5.x가 Kanana 1.5 설정을 거부해서 고정했음. `docs/오류보고서/2026-10-12_transformers5-kanana-config.md` |
 | torch는 CUDA 12.8 빌드 | RTX 50 시리즈(Blackwell)는 cu128이 필요 |
 | 통학버스 시간은 코드가 계산 | 2B 모델이 '지금 이후 가장 가까운 시간'을 못 고름. `docs/오류보고서/2026-10-12_bus-next-departure-wrong.md` |
 | FAQ·답변 대기 벡터는 SQLite | Chroma 첫 입력 직후 검색 오류. `docs/오류보고서/2026-10-12_chroma-hnsw-nothing-on-disk.md` |

@@ -7,6 +7,11 @@ ask-campus/data/
 # 설문 원본 응답 (학번·전화번호 포함)
 *사전조사 설문지*.csv
 
+# 비밀값 (학교 로그인 계정 등). 예시는 .env.example
+.env
+.env.*
+!.env.example
+
 # Office 임시·잠금 파일
 ~$*
 

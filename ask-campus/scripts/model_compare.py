@@ -3,7 +3,9 @@
 사용 (ask-campus 폴더에서):
   set ASK_LLM_MODEL=kakaocorp/kanana-2-3b-instruct
   set ASK_LLM_QUANT=4bit
-  .venv/Scripts/python scripts/model_compare.py 결과.json
+  .venv/Scripts/python scripts/model_compare.py 결과.json          # 비교 질문 19개
+  .venv/Scripts/python scripts/model_compare.py 결과.json --eval   # 평가 질문셋 108개 (eval/questions.jsonl)
+  (어댑터: set ASK_LLM_ADAPTER=<HF ID>)
 
 - DB는 복사본을 쓰고 FAQ·답변 대기를 비운다 (FAQ가 먼저 걸려 sLLM을 건너뛰지 않게, 실제 DB는 건드리지 않게).
 - 시각은 2026-11-10(화) 14:00으로 고정한다.
@@ -58,8 +60,17 @@ CASES = [
 ]
 
 
+def load_eval():
+    """eval/questions.jsonl (108문항)을 CASES 형식으로. trap은 사람이 확인."""
+    import json as _j
+    items = [_j.loads(l) for l in (ROOT / "eval" / "questions.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
+    return [(it["kind"], it["q"], it.get("campus"), it.get("expect")) for it in items], [it["id"] for it in items]
+
+
 def main():
-    out = sys.argv[1] if len(sys.argv) > 1 else "compare.json"
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    out = args[0] if args else "compare.json"
+    cases, ids = (load_eval() if "--eval" in sys.argv else (CASES, [f"C{i + 1:02d}" for i in range(len(CASES))]))
     now = datetime(2026, 11, 10, 14, 0, tzinfo=db.KST)
     rag._now = lambda: now
 
@@ -80,7 +91,7 @@ def main():
     torch.cuda.reset_peak_memory_stats()
 
     rows, score = [], {"answer": [0, 0], "none": [0, 0]}
-    for kind, q, campus, expect in CASES:
+    for (kind, q, campus, expect), qid in zip(cases, ids):
         n = len(calls)
         r = rag.ask(q, None, campus)
         used_llm = len(calls) > n
@@ -95,7 +106,7 @@ def main():
         if ok is not None:
             score[kind][0] += ok
             score[kind][1] += 1
-        rows.append({"kind": kind, "q": q, "type": r["answer_type"], "ok": ok, "ms": r["elapsed_ms"],
+        rows.append({"id": qid, "kind": kind, "q": q, "type": r["answer_type"], "ok": ok, "ms": r["elapsed_ms"],
                      "llm": used_llm, "answer": ans, "raw": raw})
         mark = {True: "PASS", False: "FAIL", None: "CHECK"}[ok]
         print(f"{mark:5} [{kind}] {q} → {r['answer_type']} {r['elapsed_ms']}ms llm={used_llm}")
@@ -103,7 +114,7 @@ def main():
 
     gen = [c[0] for c in calls]
     summary = {
-        "model": config.LLM_MODEL, "quant": config.LLM_QUANT or "bf16",
+        "model": config.LLM_MODEL, "adapter": config.LLM_ADAPTER or None, "quant": config.LLM_QUANT or "bf16", "set": "eval108" if "--eval" in sys.argv else "c19",
         "load_s": round(load_s, 1),
         "peak_vram_gb": round(torch.cuda.max_memory_allocated() / 1024**3, 2),
         "answer_pass": score["answer"], "none_pass": score["none"],
