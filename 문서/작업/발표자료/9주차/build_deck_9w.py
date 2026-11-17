@@ -13,13 +13,13 @@ from pptx.enum.shapes import MSO_SHAPE
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.util import Inches
 
-ROOT = Path(__file__).resolve().parents[3]   # 문서/작업/<폴더>/이 파일 → 리포 최상위
+ROOT = Path(__file__).resolve().parents[4]   # 문서/작업/발표자료/<주차>/이 파일 → 리포 최상위
 sys.path.insert(0, str(ROOT / "DB모델링_작업"))
 from build_db_doc import INK, LINE, MUTED, MX, NAVY, SH, SW, TINT, WHITE, badge, box, new, rgb, table, text, title  # noqa: E402
 
-FIG = ROOT / "문서" / "07_진행보고서" / "그림_중간현황"
-OUT_PPTX = ROOT / "문서" / "07_진행보고서" / "중간현황_9주차_발표자료.pptx"
-OUT_MD = ROOT / "문서" / "07_진행보고서" / "중간현황_9주차_발표대본.md"
+FIG = ROOT / "문서" / "그림" / "진행보고서"
+OUT_PPTX = ROOT / "문서" / "보고서" / "진행보고서" / "중간현황_9주차_발표자료.pptx"
+OUT_MD = ROOT / "문서" / "보고서" / "진행보고서" / "중간현황_9주차_발표대본.md"
 
 GREEN, BLUE, CORAL, GRAY = rgb("2E7D5B"), rgb("2A6F97"), rgb("C8553D"), rgb("8A929E")
 LIGHT = rgb("CADCFC")

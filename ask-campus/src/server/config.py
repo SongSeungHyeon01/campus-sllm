@@ -11,7 +11,7 @@ CHUNKS_LOGIN_JSONL = DATA / "chunks_login.jsonl"    # 로그인 필요한 FAQ·Q
 CHUNKS_SITE_JSONL = DATA / "chunks_site.jsonl"      # 학교 사이트 전체 메뉴 + 학과·대학원 사이트 (src/ingest/run_site.py)
 
 EMBED_MODEL = os.getenv("ASK_EMBED_MODEL", "nlpai-lab/KURE-v1")
-# 11/17 13개 모델 비교로 A.X 4.0 Light 4bit 채택 (문서/09_개발문서/sLLM_모델비교.md). 7B라 bf16(약 15GB)은 8GB GPU에 안 들어감
+# 11/17 13개 모델 비교로 A.X 4.0 Light 4bit 채택 (문서/보고서/개발문서/sLLM_모델비교.md). 7B라 bf16(약 15GB)은 8GB GPU에 안 들어감
 LLM_MODEL = os.getenv("ASK_LLM_MODEL", "skt/A.X-4.0-Light")
 EMBED_DEVICE = os.getenv("ASK_EMBED_DEVICE", "cuda")  # "cpu"면 KURE를 CPU에서 돌림
 LLM_QUANT = os.getenv("ASK_LLM_QUANT", "4bit")      # "4bit" | "8bit" | ""(bf16, GPU 16GB 이상일 때)
