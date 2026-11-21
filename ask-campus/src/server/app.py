@@ -152,7 +152,7 @@ def faq_detail(faq_id: int):
     if not r:
         return error(404, "NOT_FOUND", "FAQ를 찾을 수 없습니다.")
     return {"faq_id": r["faq_id"], "question": r["question"], "answer": r["answer"], "category": r["category"],
-            "source_label": f"학과 조교 답변 · {r['created_at'][:10]}"}
+            "source_label": f"관리자 등록 답변 · {r['created_at'][:10]}"}
 
 
 # ---------------------------------------------------------------- 관리 웹 (임시 로그인)
@@ -176,7 +176,10 @@ def login_page(request: Request, error: str = ""):
 
 
 @app.post("/admin/login")
-def login(password: str = Form(...)):
+def login(request: Request, password: str = Form(...)):
+    # 비밀번호를 계속 넣어 보는 것을 막는다: 같은 주소에서 1분에 5번까지 (터널로 외부에 열려 있어서)
+    if rate_limited("login:" + client_ip(request), per_minute=5):
+        return RedirectResponse("/admin/login?error=1", status_code=303)
     if not config.ADMIN_PASSWORD or not hmac.compare_digest(password, config.ADMIN_PASSWORD):
         return RedirectResponse("/admin/login?error=1", status_code=303)
     resp = RedirectResponse("/admin", status_code=303)

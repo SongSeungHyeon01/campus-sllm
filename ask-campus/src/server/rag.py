@@ -1,6 +1,6 @@
 """질문 하나를 처리한다 (API 명세 1-2 서버 처리 순서).
 
-1) FAQ(학과 조교 답변)에서 거의 같은 질문을 찾으면 그 답변을 그대로 돌려줌
+1) FAQ(관리자가 등록한 답변)에서 거의 같은 질문을 찾으면 그 답변을 그대로 돌려줌
 2) 아니면 청크를 검색해 기준 이상이면 sLLM이 근거만으로 답변
 3) 근거가 없거나 sLLM이 "찾을 수 없습니다"라고 하면 답변 대기에 자동 등록 (FR-005, FR-028)
 
@@ -17,8 +17,8 @@ from . import cafeteria, clarifier, config, db, departments, external, index, ll
 
 SOURCE_GAP = 0.04          # 출처로 보여 줄 근거의 점수 차이 한도
 
-NOT_FOUND_ANSWER = ("해당 정보를 찾을 수 없습니다. 아직 답을 모르는 질문이라 학과 조교에게 전달했어요. "
-                    "답변이 등록되면 같은 질문에 바로 답해 드릴게요.")
+# 11/21 사용자 결정: 조교에게 넘기는 흐름을 없앴다. 못 찾은 질문은 관리 웹 '답변 대기'에 쌓이고 관리자가 답을 등록한다
+NOT_FOUND_ANSWER = "해당 정보를 찾을 수 없습니다. 학교 홈페이지나 담당 부서에 문의해 주세요."
 
 
 def _blob(vec: list[float]) -> bytes:
@@ -337,9 +337,11 @@ def _ranked_hits(qvec: list[float], where: dict | None, question: str = "") -> l
 _CONTEST_WORDS = ("공모전", "경진대회", "콘테스트", "공모")
 _CONTEST_TITLE = ("공모전", "경진대회", "콘테스트", "대회")     # 목록에 넣을 제목 ('기관 공모', '논문 공모'는 학생 공모전이 아님)
 _MONTH_DAY = re.compile(r"(?<!\d)(\d{1,2})월\s*(\d{1,2})일")
-_LIST_WORDS = ("요즘", "진행", "모집", "지금", "현재", "뭐있", "있어", "있나", "목록", "알려", "종류", "어떤")
+_LIST_WORDS = ("요즘", "진행", "모집", "지금", "현재", "뭐있", "있어", "있나", "목록", "알려", "종류", "어떤", "마감", "임박", "빠른", "언제")
 _CONTEST_STOP = set("공모전 경진대회 콘테스트 공모 요즘 하는 지금 현재 진행 진행중 중인 모집 모집중 뭐 뭐가 있어 있어? 있나 있나요 "
                     "알려줘 알려줘봐 알려 주세요 목록 종류 어떤 거 것 좀 학교 우리 참여 참가 할 수 있는".split())
+_ORDER_WORDS = set("가장 제일 빠른 빠른순 날짜 마감 마감일 임박 곧 순서 먼저 언제 언제까지 기간 일정 최근 새로운".split())
+_SOONEST = ("가장빠른", "제일빠른", "마감임박", "곧마감", "빠른순", "마감순", "가장먼저", "제일먼저")
 
 
 def _contest_intent(question: str) -> bool:
@@ -365,19 +367,60 @@ def _contest_deadlines(campus: str | None, today: str) -> dict:
         other = {"아산": "영동", "영동": "아산"}.get(campus or "")
         if other and (f"({other})" in name or f"{other}캠" in name):   # 제목에 다른 캠퍼스가 적힌 공지는 뺀다
             continue
-        text = r["title"] + " " + r["content"][:1500]
         year = (r["posted_at"] or today)[:4]                    # '11월 30일(월)까지'처럼 연도가 없으면 게시 연도로 본다
-        dates = _dates(text) + [f"{year}-{int(m):02d}-{int(d):02d}" for m, d in _MONTH_DAY.findall(text)
-                                if 1 <= int(m) <= 12 and 1 <= int(d) <= 31]
-        deadline = max(dates, default=None)
+        deadline, exact = _apply_deadline(r["content"][:2000], year)
+        if deadline is None:                                    # 접수·기간 줄이 없으면 공지 안의 가장 늦은 날짜 (발표일일 수 있음)
+            text = r["title"] + " " + r["content"][:1500]
+            deadline = max(_dates(text) + _loose_dates(text, year), default=None)
         if not deadline or deadline < today:
             continue
         site = r["title"].split(": ", 1)[0] if ": " in r["title"] else "학교"
         if name in found:
             found[name][2].append(site)
         else:
-            found[name] = (deadline, r, [site])
+            found[name] = (deadline, r, [site], exact)
     return found
+
+
+_APPLY = re.compile(r"접수|신청|모집|응모")
+_PERIOD = re.compile(r"기간")
+_MD_DOT = re.compile(r"(?<![\d.])(\d{1,2})\s*\.\s*(\d{1,2})\s*\.?\s*(?=\()")     # '10. 30.(금)', '11.13.(금)'
+
+
+def _loose_dates(text: str, year: str) -> list[str]:
+    """연도 없이 쓴 날짜 ('11월 30일', '10. 30.(금)')를 게시 연도로 읽는다."""
+    out = []
+    for m, d in _MONTH_DAY.findall(text) + _MD_DOT.findall(text):
+        if 1 <= int(m) <= 12 and 1 <= int(d) <= 31:
+            out.append(f"{year}-{int(m):02d}-{int(d):02d}")
+    return out
+
+
+def _apply_deadline(content: str, year: str) -> tuple[str | None, bool]:
+    """공모전 공지에서 접수 마감일을 찾는다. (날짜, 접수 마감이 맞는가)
+
+    11/21: 공지 안의 가장 늦은 날짜(시상식·결과 발표)를 마감으로 봐서, 접수가 끝난 공모전을 '모집 중'으로 보여 줬다
+    (AI시스템트레이딩: 시상식 11.30 / 안산시 숏폼: 접수 10.30, 발표 12.4 / 학습법: 신청 10.23, 최종 제출 11.30).
+    1) '접수·신청·모집·응모'가 든 줄의 날짜 ('2026.9.28.~'처럼 끝이 없는 줄은 건너뜀)
+    2) 없으면 '기간'이 든 줄 (예: 대회 기간 10.19~11.13)
+    """
+    for pattern in (_APPLY, _PERIOD):
+        ends = []
+        lines = content.split("\n")
+        for i, line in enumerate(lines):
+            if not pattern.search(line):
+                continue
+            # '3. 접수기간:' 다음 줄에 날짜가 오는 공지가 있어 다음 줄까지 본다
+            if not (_dates(line) + _loose_dates(line, year)) and i + 1 < len(lines):
+                line = line + " " + lines[i + 1]
+            if re.search(r"~\s*$", line.strip()):         # '2026.9.28.~'처럼 끝이 없는 기간
+                continue
+            ds = _dates(line) + _loose_dates(line, year)
+            if ds:
+                ends.append(max(ds))
+        if ends:
+            return min(ends), pattern is _APPLY       # 신청과 제출이 따로 있으면 먼저 오는 신청 마감
+    return None, False
 
 
 def _contest_list(question: str, campus: str | None, now: datetime, dept: str | None) -> tuple[str, list[dict]] | None:
@@ -393,8 +436,12 @@ def _contest_list(question: str, campus: str | None, now: datetime, dept: str | 
     found = _contest_deadlines(campus, today)
     dept = None if dept == departments.ALL else dept
     kw = departments.keywords(dept)
-    words = [w for w in re.findall(r"[가-힣A-Za-z0-9]+", question)
-             if w not in _CONTEST_STOP and len(w) >= 2 and not (dept and (w in dept or dept in w))]
+    # 11/21: '가장 빠른 공모전 날짜좀'의 '가장 빠른 날짜좀'을 주제어로 잘못 보고 '관련 공모전이 없다'고 답했다.
+    # 순서·날짜를 묻는 말과 끝에 붙은 '좀'은 주제어에서 뺀다
+    words = [re.sub(r"좀$", "", w) for w in re.findall(r"[가-힣A-Za-z0-9]+", question)]
+    words = [w for w in words if w not in _CONTEST_STOP and not any(w.startswith(o) for o in _ORDER_WORDS) and len(w) >= 2
+             and not (dept and (w in dept or dept in w))]
+    soonest = any(w in question.replace(" ", "") for w in _SOONEST)
     picked = {k: v for k, v in found.items() if any(w in k for w in words)} if words else found
     # 질문 문장은 보내지 않고 주제어(없으면 학과 키워드 두 개)만 외부 검색에 보낸다
     news = external.contest_news(words or list(kw[:2]), now)
@@ -420,13 +467,18 @@ def _contest_list(question: str, campus: str | None, now: datetime, dept: str | 
     region_rest = [c for c in region if not fits(c["title"])]
 
     def school_line(n, v):
-        # 공지 안의 마지막 날짜가 접수 마감이 아니라 발표일일 수 있어서 '마감'이라고 하지 않는다
-        return f"· {n} (일정 ~{v[0][5:7]}.{v[0][8:10]})"
+        # 접수 줄에서 찾은 날짜면 '접수 ~', 아니면(발표일일 수도 있음) '일정 ~'
+        return f"· {n} ({'접수' if v[3] else '일정'} ~{v[0][5:7]}.{v[0][8:10]})"
 
     def region_line(c):
         return (f"· {c['title']} (충청남도, 접수 {c['start'][5:7]}.{c['start'][8:10]}~"
                 f"{c['deadline'][5:7]}.{c['deadline'][8:10]})")
 
+    if soonest:                             # '가장 빠른·마감 임박' → 날짜가 가장 가까운 것 하나를 먼저 말한다
+        cands = [(v[0], n) for n, v in school] + [(c["deadline"], c["title"]) for c in region]
+        if cands:
+            d, n = min(cands)
+            parts.append(f"마감이 가장 가까운 공모전은 '{n}'입니다 (~{d[5:7]}.{d[8:10]}).")
     if dept:
         lines = [school_line(n, v) for n, v in mine[:5]] + [region_line(c) for c in region_mine]
         parts.append(f"{dept} 추천 공모전입니다.\n" + "\n".join(lines) if lines
@@ -511,21 +563,22 @@ def ask(question: str, category: str | None = None, campus: str | None = None,
             if faq is not None and score >= config.FAQ_SCORE and not _faq_conflicts(question, faq["question"]):
                 con.execute("UPDATE faq SET ask_count = ask_count + 1 WHERE faq_id = ?", (faq["faq_id"],))
                 result.update(answer_type="FAQ", answer=faq["answer"], sources=[{
-                    "title": faq["question"], "kind": "학과 조교 답변", "source_url": None, "menu_path": None,
-                    "collected_at": faq["created_at"], "label": f"학과 조교 답변 · {faq['created_at'][:10]}"}])
+                    "title": faq["question"], "kind": "관리자 등록 답변", "source_url": None, "menu_path": None,
+                    "collected_at": faq["created_at"], "label": f"관리자 등록 답변 · {faq['created_at'][:10]}"}])
 
     # 학식 메뉴는 오늘·내일·요일을 코드가 계산해 고른다 (11/20: 금요일에 화요일 메뉴를 답했음)
     if result["answer_type"] == "근거없음" and cafeteria.is_menu_question(question):
         menu = cafeteria.answer(question, campus, _now())
         if menu:
             answered_by = "cafeteria"
-            # 그날 식단이 없으면(주말·아직 안 올라옴) 근거없음으로 알리되, 조교 답변 대기에는 올리지 않는다
+            # 그날 식단이 없으면(주말·아직 안 올라옴) 근거없음으로 알리되, 답변 대기에는 올리지 않는다
             result.update(answer_type="문서" if menu[1] else "근거없음", answer=menu[0], sources=[{
                 "title": "학교 구내식당", "kind": "학교 홈페이지", "source_url": "https://www.u1.ac.kr/u1/life/cafeteria.do",
                 "menu_path": "홈 > 대학생활 > 학교 구내식당", "collected_at": None, "label": "유원대: 학교 구내식당"}])
 
     if result["answer_type"] == "근거없음" and _contest_intent(question):
-        dept = departments.find_in(question) or department          # 질문에 적힌 학과가 우선
+        # 질문에 적힌 학과가 우선. 직접 적은 학과는 줄임말도 알아본다 (예: '간호' → 간호학과)
+        dept = departments.find_in(question) or (department and departments.find_in(department)) or department
         contest = _contest_list(question, campus, _now(), dept)
         if contest:
             result.update(answer_type="문서", answer=contest[0], sources=contest[1])
@@ -582,7 +635,7 @@ def ask(question: str, category: str | None = None, campus: str | None = None,
 
 
 def add_faq(pending_id: int, question: str, answer: str, category: str, campus: str | None) -> int:
-    """학과 조교 답변을 FAQ로 저장하고 바로 검색에 쓰이게 한다 (FR-029, PER-010). 승인 단계 없음."""
+    """관리자 답변을 FAQ로 저장하고 바로 검색에 쓰이게 한다 (FR-029, PER-010). 승인 단계 없음."""
     vec = _blob(index.embed([question])[0])
     ts = db.now()
     with db.connect() as con:

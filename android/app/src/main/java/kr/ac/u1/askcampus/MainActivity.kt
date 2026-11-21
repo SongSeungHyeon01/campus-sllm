@@ -13,7 +13,7 @@ import kr.ac.u1.askcampus.databinding.ActivityMainBinding
 
 /**
  * 채팅 화면 (SCR-001) MVP.
- * 질문 → 서버 POST /api/v1/ask → 답변·출처 표시. 근거가 없으면 '학과 조교에게 전달됨' 안내 (FR-005, FR-028).
+ * 질문 → 서버 POST /api/v1/ask → 답변·출처 표시. 근거가 없으면 '찾을 수 없음' 안내 (FR-005).
  * 캠퍼스·서버 주소는 기기에만 저장한다 (2.6).
  */
 class MainActivity : AppCompatActivity() {

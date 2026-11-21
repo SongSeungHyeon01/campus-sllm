@@ -59,7 +59,7 @@ class ChatAdapter(private val onRetry: (String) -> Unit) : RecyclerView.Adapter<
         text.setTextColor(ContextCompat.getColor(ctx, if (m.loading) R.color.muted else R.color.ink))
 
         val note = v.findViewById<TextView>(R.id.note)
-        note.visibility = if (m.pending) View.VISIBLE else View.GONE
+        note.visibility = View.GONE   // 11/21: 조교에게 넘기는 흐름을 없애 '전달됨' 안내를 보이지 않음
         note.text = ctx.getString(R.string.pending_note)
 
         val box = v.findViewById<LinearLayout>(R.id.sources)
@@ -77,7 +77,7 @@ class ChatAdapter(private val onRetry: (String) -> Unit) : RecyclerView.Adapter<
         val muted = ContextCompat.getColor(ctx, R.color.muted)
         val navy = ContextCompat.getColor(ctx, R.color.navy)
         val sb = SpannableStringBuilder()
-        val label = if (s.kind == "학과 조교 답변") "학과 조교 답변" else "출처"
+        val label = if (s.kind == "관리자 등록 답변") "관리자 등록 답변" else "출처"
         sb.append("$label: ${s.title}")
         s.collectedAt?.let { sb.append(" · ${it.take(10)}") }
         s.menuPath?.let { sb.append("\n위치: $it") }
