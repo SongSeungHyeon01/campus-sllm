@@ -97,13 +97,18 @@ def answer(question: str, campus: str | None, now: datetime) -> tuple[str, bool]
                 out.append(f"{head} 식단은 아직 올라오지 않았습니다. 지금 있는 식단은 {span} 주간입니다." if key > week[1]
                            else f"{head} 식단은 남아 있지 않습니다. 지금 있는 식단은 {span} 주간입니다.")
             continue
+        # 11/21 사용자 요청: 한 줄에 날짜·캠퍼스·메뉴가 다 붙어 읽기 어려움 → 날짜를 제목으로, 끼니마다 한 줄
+        block = [head + (f" {campuses[0]}" if len(campuses) == 1 else "")]
         for c in campuses:
             for meal in meals:
                 items = days[key].get((c, meal))
                 if items:
                     found = True
-                    out.append(f"{head} {c} {meal}: {', '.join(items)}")
+                    label = meal if len(campuses) == 1 else f"{c} {meal}"
+                    block.append(f"· {label}: {', '.join(items)}")
+        if len(block) > 1:
+            out.append("\n".join(block))
     if not out:
         return None
     tail = "\n\n식단은 시장 수급 상황에 따라 달라질 수 있습니다." if found else ""
-    return "\n".join(out) + tail, found
+    return "\n\n".join(out) + tail, found

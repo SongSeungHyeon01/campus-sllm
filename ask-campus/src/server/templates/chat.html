@@ -23,6 +23,12 @@
   .fb-btn { font:inherit; font-size:12px; padding:3px 10px; border:1px solid var(--line); border-radius:12px;
             background:#fff; color:var(--muted); cursor:pointer; }
   .fb-in { flex:1; font:inherit; font-size:13px; padding:5px 8px; border:1px solid var(--line); border-radius:8px; }
+  /* 답 본문: 줄마다 나눠 보여 준다. '· ' 줄은 들여쓰기, 여러 줄 답의 첫 줄(핵심)은 굵게 (11/21 가독성) */
+  .ans .lead { font-weight:600; margin-bottom:2px; }
+  .ans .li { position:relative; padding-left:14px; }
+  .ans .li::before { content:"·"; position:absolute; left:3px; font-weight:700; color:var(--navy); }
+  .ans .gap { height:8px; }
+  .ans .sub { font-weight:600; margin-top:6px; }
   .choices { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; white-space:normal; }
   .choice { font:inherit; font-size:14px; padding:6px 12px; border:1px solid var(--line); border-radius:16px;
             background:#fff; color:var(--navy); cursor:pointer; }
@@ -55,21 +61,50 @@ function add(cls, text) {
 }
 // 되묻기(FR-027)에서 고른 학과. 이 화면을 닫기 전까지만 기억하고 서버에는 질문할 때만 보낸다
 let department = null;
+// 학과를 되물은 뒤 버튼 대신 입력창에 학과 이름을 적으면, 그 말을 학과로 받고 원래 질문을 다시 보낸다
+let waitingDept = null;     // 학과를 되물었던 원래 질문
 
 // 되묻기 선택지를 버튼으로. department는 학과를 기억하고 같은 질문을 다시, refine은 원래 질문에 고른 말을 붙여 다시 묻는다
-function addChoices(box, clarify, original) {
-  if (!clarify.options || !clarify.options.length) return;
+function addChoices(box, clarify, original, options) {
+  options = options || clarify.options;
+  if (!options || !options.length) return;
   const wrap = document.createElement('div'); wrap.className = 'choices';
-  for (const opt of clarify.options) {
+  for (const opt of options) {
     const b = document.createElement('button'); b.type = 'button'; b.className = 'choice'; b.textContent = opt;
     b.addEventListener('click', () => {
+      // 학과 목록의 '전체 보기'는 다른 캠퍼스까지 학과 전체를 펼친다 (질문은 다시 보내지 않음)
+      if (clarify.field === 'department' && opt === '전체 보기' && clarify.more) {
+        wrap.remove(); addChoices(box, clarify, original, clarify.more); return;
+      }
       wrap.querySelectorAll('button').forEach(x => x.disabled = true);
+      waitingDept = null;
       if (clarify.field === 'department') { department = opt; ask(original, `${opt} 선택`); }
       else ask(opt.includes(original) ? opt : `${original} ${opt}`);
     });
     wrap.appendChild(b);
   }
   box.appendChild(wrap);
+}
+
+// 답 본문을 줄 단위로 그린다. 서버(readable.py)가 목록은 '· '로, 긴 문단은 문장마다 줄을 나눠 보낸다.
+// textContent만 쓰므로 답에 HTML이 섞여 있어도 그대로 글자로 보인다
+function renderAnswer(box, text) {
+  box.textContent = '';
+  const body = document.createElement('div'); body.className = 'ans';
+  const lines = text.split('\n'), multi = lines.length >= 4;
+  lines.forEach((ln, i) => {
+    const d = document.createElement('div');
+    if (!ln.trim()) d.className = 'gap';
+    else if (ln.startsWith('· ')) { d.className = 'li'; d.textContent = ln.slice(2); }
+    else {
+      d.textContent = ln;
+      if (i === 0 && multi && ln.length <= 60) d.className = 'lead';
+      // '1. 일반휴학'처럼 번호 붙은 짧은 줄 밑에 '· ' 항목이 이어지면 소제목으로
+      else if (/^(\d{1,2}|[가-하])\.\s/.test(ln) && ln.length <= 30 && (lines[i + 1] || '').startsWith('· ')) d.className = 'sub';
+    }
+    body.appendChild(d);
+  });
+  box.appendChild(body);
 }
 
 // '답이 이상해요': 누르면 무엇이 틀렸는지 한 줄 적게 하고, 관리 웹 '답변 피드백'으로 보낸다
@@ -102,8 +137,11 @@ async function ask(text, shown) {
       body: JSON.stringify({ question: text, campus: document.getElementById('campus').value, department }) });
     const d = await r.json();
     if (!r.ok) { wait.textContent = (d.error && d.error.message) || '오류가 났어요.'; return; }
-    wait.textContent = d.answer;
-    if (d.clarify) { addChoices(wait, d.clarify, text); return; }
+    renderAnswer(wait, d.answer);
+    if (d.clarify) {
+      waitingDept = d.clarify.field === 'department' ? text : null;
+      addChoices(wait, d.clarify, text); return;
+    }
     const meta = document.createElement('div'); meta.className = 'meta';
     meta.append(`${d.answer_type} · ${(d.elapsed_ms / 1000).toFixed(1)}초`);
     for (const s of d.sources || []) {
@@ -121,7 +159,13 @@ async function ask(text, shown) {
 document.getElementById('f').addEventListener('submit', (e) => {
   e.preventDefault();
   const text = q.value.trim(); if (!text) return;
-  q.value = ''; ask(text);
+  q.value = '';
+  if (waitingDept && text.length <= 20) {          // 되물은 학과에 대한 답으로 본다
+    const original = waitingDept; waitingDept = null;
+    document.querySelectorAll('.choices button').forEach(x => x.disabled = true);
+    department = text; ask(original, text); return;
+  }
+  waitingDept = null; ask(text);
 });
 document.getElementById('campus').addEventListener('change', () => { department = null; });   // 캠퍼스가 바뀌면 학과도 다시 묻는다
 </script>

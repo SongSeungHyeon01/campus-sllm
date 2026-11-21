@@ -68,8 +68,8 @@ FILLER = set("알려줘 알려줘요 알려주세요 알려 궁금해 궁금해�
 _PARTICLE = re.compile(r"(은|는|이|가|을|를|에|에서|에대해|이요|요)$")
 _BUS = ("버스", "통학", "셔틀")
 _BUS_TIME = ("시간", "몇시", "몇 시", "첫차", "막차", "빠른", "다음", "언제", "운행")
-_CONTEST = ("공모전", "경진대회", "콘테스트")
-_CONTEST_LIST = ("요즘", "진행", "모집", "지금", "현재", "뭐있", "있어", "있나", "목록", "알려", "종류", "어떤")
+_CONTEST = ("공모전", "경진대회", "콘테스트", "해커톤")
+_CONTEST_LIST = ("요즘", "진행", "모집", "지금", "현재", "뭐있", "있어", "있나", "목록", "알려", "종류", "어떤", "마감", "임박", "빠른", "언제")
 
 
 def _tokens(question: str) -> list[str]:
@@ -117,8 +117,10 @@ def check(question: str, campus: str | None, department: str | None) -> dict | N
     if any(w in compact for w in _CONTEST) and (any(w in compact for w in _CONTEST_LIST) or contest_only):
         if not department and not departments.find_in(q):
             return {"field": "department",
-                    "question": "어느 학과 학생인가요? 학과에 맞는 공모전을 먼저 보여 드릴게요.",
-                    "options": departments.for_campus(campus) + [departments.ALL]}
+                    "question": "어느 학과 학생인가요? 아래에서 고르거나, 목록에 없으면 학과 이름을 적어 주세요. 학과에 맞는 공모전을 먼저 보여 드릴게요.",
+                    "options": departments.for_campus(campus) + [departments.MORE, departments.ALL],
+                    # '전체 보기'를 누르면 화면이 이 목록(두 캠퍼스 학과 전체)으로 버튼을 바꾼다
+                    "more": departments.for_campus(None) + [departments.ALL]}
         return None
 
     # 3) 통학버스 시간인데 정류장 없음
