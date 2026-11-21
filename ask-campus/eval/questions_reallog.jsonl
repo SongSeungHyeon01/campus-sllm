@@ -1,0 +1,22 @@
+{"id": "R-01", "kind": "answer", "campus": "아산", "q": "전과 몇 번까지 할 수 있어?", "expect": ["2회"], "source": "real-log"}
+{"id": "R-02", "kind": "answer", "campus": "아산", "q": "2학기 기말고사 날짜가 언제야", "expect": ["12.08", "12월 8일", "12월 08일"], "source": "real-log"}
+{"id": "R-03", "kind": "answer", "campus": "아산", "q": "동아리 몇 개야?", "expect": ["19"], "source": "real-log"}
+{"id": "R-04", "kind": "answer", "campus": "아산", "q": "종교 동아리 있어?", "expect": ["C.C.C", "S.F.C"], "source": "real-log"}
+{"id": "R-05", "kind": "answer", "campus": "아산", "q": "운동 동아리 뭐 있어?", "expect": ["족구", "Y.B.R.C", "P.O.S"], "source": "real-log"}
+{"id": "R-06", "kind": "answer", "campus": "아산", "q": "통학버스 무료임?", "expect": ["무료"], "source": "real-log"}
+{"id": "R-07", "kind": "answer", "campus": "아산", "q": "학식 오늘 메뉴", "expect": ["식단"], "source": "real-log"}
+{"id": "R-08", "kind": "answer", "campus": "아산", "q": "이번 주 아산 학식 메뉴 알려줘", "expect": ["돈육김치찌개"], "source": "real-log"}
+{"id": "R-09", "kind": "answer", "campus": "아산", "q": "국가장학금 신청 기간 알려줘", "expect": ["11.24", "11월 24일", "11. 24"], "source": "real-log"}
+{"id": "R-10", "kind": "answer", "campus": "아산", "q": "휴학 신청 방법", "expect": ["휴학원"], "source": "real-log"}
+{"id": "R-11", "kind": "none", "campus": "아산", "q": "교환학생 지원 자격", "expect": [], "source": "real-log"}
+{"id": "R-12", "kind": "answer", "campus": "아산", "q": "두정역 모든 시간대 좀 나열해봐", "expect": ["08:00"], "source": "real-log"}
+{"id": "R-13", "kind": "answer", "campus": "아산", "q": "두정역에서 학교 가는 막차 몇 시야?", "expect": ["19:30"], "source": "real-log"}
+{"id": "R-14", "kind": "answer", "campus": "영동", "q": "영동역에서 학교 가는 통학버스 시간 알려줘", "expect": ["9:25", "09:25", "8:00", "08:00"], "source": "real-log"}
+{"id": "R-15", "kind": "clarify", "campus": "아산", "q": "공모전 정보좀 찾고싶은데", "expect": [], "source": "real-log"}
+{"id": "R-16", "kind": "clarify", "campus": "아산", "q": "장학금", "expect": [], "source": "real-log"}
+{"id": "R-17", "kind": "trap", "campus": "아산", "q": "휴학은 최대 몇 학기까지 가능해?", "expect": [], "source": "real-log"}
+{"id": "R-18", "kind": "trap", "campus": "아산", "q": "ai 소프트웨어학과 학과장이 누구야", "expect": [], "source": "real-log"}
+{"id": "R-19", "kind": "trap", "campus": "아산", "q": "시내버스 요금 얼마야?", "expect": [], "source": "real-log"}
+{"id": "R-20", "kind": "trap", "campus": "아산", "q": "학교 동아리 뭐있냐 지금 신청할만한거 아산", "expect": [], "source": "real-log"}
+{"id": "R-21", "kind": "trap", "campus": "아산", "q": "축제 뭐있어", "expect": [], "source": "real-log"}
+{"id": "R-22", "kind": "trap", "campus": "아산", "q": "장학금 신청 자격", "expect": [], "source": "real-log"}

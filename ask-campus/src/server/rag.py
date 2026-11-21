@@ -296,7 +296,7 @@ def register_pending(question: str, category: str | None, campus: str | None, qv
 
 
 _DATE = re.compile(r"(20\d{2})\s*[.\-년]\s*(\d{1,2})\s*[.\-월]\s*(\d{1,2})")
-_WHEN = ("언제", "날짜", "기간", "일정", "며칠", "몇 일", "마감", "까지", "시작")
+_WHEN = ("언제", "날짜", "기간", "일정", "며칠", "몇 일", "마감", "까지", "시작", "아직", "지금도")
 
 
 def _dates(text: str) -> list[str]:
@@ -319,15 +319,150 @@ def _rerank(question: str, hits: list[dict], now: datetime) -> list[dict]:
         return hits
     # 반년 넘게 지난 일정만 내린다. 올해 이미 지난 일정(하계 계절학기, 2학기 수강정정)을 묻는 질문도 있어서
     today, stale = now.strftime("%Y-%m-%d"), (now - timedelta(days=180)).strftime("%Y-%m-%d")
+    # 11/21 페르소나 평가: '성적 정정 기간 언제임?'에 1학기(6월) 공지로, '1학기 복학 신청 언제?'에 2학기(7월) 복학 공고로 답했다.
+    # 다가오는 학사일정(12.23 성적 정정, 2027.01.06 복학)이 검색은 됐지만 지난 공지와 점수가 비슷했다.
+    # 과거형으로 묻지 않으면('언제였어', '했어') 반년 안에 지난 일정도 조금 내린다
+    past_q = any(w in question for w in ("였", "었어", "했어", "했지", "지났", "작년", "지난"))
+    # '1학기 복학'을 물었는데 제목이 '2학기 복학 공고'면 내린다 (같은 평가에서 2학기 공고로 답함)
+    sem = re.search(r"([12])\s*학기", question)
+
+    # 반년 안에 지난 일정은 '같은 종류의 다가오는 일정'이 후보에 있을 때만 내린다.
+    # (회귀 평가: '하계 계절학기 기간', '봄내장학생 접수기간'처럼 지난 일정을 묻는 질문까지 내려가서 틀렸다)
+    q_words = {t for t in clarifier._tokens(question) if len(t) >= 2}
+    qual = [w for w in ("하계", "동계", "여름", "겨울", "1학기", "2학기") if w in question.replace(" ", "")]
+
+    def _upcoming(x):
+        ds = _dates(x["meta"].get("title", "") + " " + x["document"][:400])
+        return bool(ds) and max(ds) >= today
+    newer = [x["meta"].get("title", "") for x in hits if _upcoming(x)]
+
+    def has_newer(title: str) -> bool:
+        if any(w in title.replace(" ", "") for w in qual):
+            return False                       # 질문이 '하계'·'1학기'처럼 그 일정을 콕 집었으면 내리지 않는다
+        shared = {w for w in q_words if w in title}
+        return any(shared & {w for w in q_words if w in t} for t in newer)
 
     def adjusted(h):
-        ds = _dates(h["meta"].get("title", "") + " " + h["document"][:400])
+        title = h["meta"].get("title", "")
+        base = h["score"]
+        if sem and re.search(r"[12]\s*학기", title) and not re.search(sem[1] + r"\s*학기", title):
+            base -= 0.04
+        # '수강신청 기간'에 이미 끝난 동계 계절학기 수강신청으로 답했다 → 계절학기를 묻지 않으면 계절학기 공지는 맨 뒤로
+        if "계절" in title and "계절" not in question:
+            base -= 1.0
+        # '하계'를 물었는데 '동계' 공지면 내린다 (반대도). 회귀 평가 '하계 계절학기 기간'에 동계 공지가 1·2위였음
+        for want, other in (("하계", "동계"), ("동계", "하계"), ("여름", "겨울"), ("겨울", "여름")):
+            if want in question and other in title and want not in title:
+                base -= 0.06
+        ds = _dates(title + " " + h["document"][:400])
         if not ds:
-            return h["score"]
+            return base
         if max(ds) >= today:
-            return h["score"] + 0.03
-        return h["score"] - 0.08 if max(ds) < stale else h["score"]
+            return base + 0.05
+        if max(ds) < stale:
+            return base - 0.08
+        return base - 0.04 if not past_q and has_newer(title) else base
     return sorted(hits, key=adjusted, reverse=True)
+
+
+_TIME = re.compile(r"(?<!\d)(\d{1,2}):(\d{2})(?!\d)")
+_PHONE = re.compile(r"(?<!\d)(\d{2,4})[-)\s]\s*(\d{3,4})-(\d{4})(?!\d)")
+_WON = re.compile(r"(?<![\d,])(\d{1,3}(?:,\d{3})+|\d+)\s*(만\s*)?원")
+_MD_ANS = re.compile(r"(?<!\d)(\d{1,2})월\s*(\d{1,2})일")
+_MD_CTX = re.compile(r"(?<!\d)(\d{1,2})\s*(?:[./]|월)\s*(\d{1,2})(?!\d)")
+
+
+def _grounded(answer: str, contexts: list[str]) -> bool:
+    """답에 나온 시간·전화번호·금액·날짜(월일)가 근거에 모두 있는가.
+
+    11/21 페르소나 평가: '도서관 운영시간?'에 근거(독서인증제 공지, 도서관 회원가입 Q&A)에 없는
+    '평일 09:00~22:00, 주말 09:00~17:00'을 지어냈다. 값이 근거에 없으면 그 값을 쓴 문장은 내보내지 않는다.
+    """
+    ctx = " ".join(contexts)
+    flat = re.sub(r"\s+", "", ctx)
+    ctx_times = {(int(h), m) for h, m in _TIME.findall(ctx)}
+    ctx_times |= {(int(h), "00") for h in re.findall(r"(?<!\d)(\d{1,2})\s*시(?!간)", ctx)}   # 근거 '24시' = 답 '24:00'
+    if any((int(h), m) not in ctx_times for h, m in _TIME.findall(answer)):
+        return False
+    if any(f"{b}-{c}" not in flat for _, b, c in _PHONE.findall(answer)):
+        return False
+    for num, man in _WON.findall(answer):
+        if num.replace(",", "") not in flat.replace(",", ""):
+            return False
+    ctx_md = {(int(m), int(d)) for m, d in _MD_CTX.findall(ctx)}
+    # '2026. 09. 10(목) 11:00 ~ 11(금) 24:00'처럼 끝나는 날은 월을 빼고 쓴다 → 같은 달의 '11(' '11일'도 인정
+    months = {m for m, _ in ctx_md}
+    days = {int(d) for d in re.findall(r"(?<![\d.])(\d{1,2})\s*(?:\(|일)", ctx)}
+    return all((int(m), int(d)) in ctx_md or (int(m) in months and int(d) in days) for m, d in _MD_ANS.findall(answer))
+
+
+_SENT_END = re.compile(r"(?<=[다요]\.)\s+|\n+")
+
+
+def _keep_grounded(answer: str, contexts: list[str]) -> str:
+    """근거에 없는 값이 든 문장만 뺀다. 남는 게 없으면 빈 문자열 (→ 근거없음).
+
+    회귀 평가: '등록금 반 돌려받을 수 있는 마지막 날'에 '90일 이내' 문장은 맞고 '2027년 2월 28일까지'는 지어낸 값이었다.
+    """
+    if _grounded(answer, contexts):
+        return answer
+    keep = [p for p in _SENT_END.split(answer) if p.strip() and _grounded(p, contexts)]
+    has_value = [p for p in keep if re.search(r"\d", p)]
+    return "\n".join(keep) if has_value else ""
+
+
+def _stale_note(question: str, answer: str, used: list[dict], now: datetime) -> str:
+    """일정을 묻는데 근거가 모두 반년 넘게 지난 자료면, 몇 년도 자료인지 앞에 밝힌다.
+
+    11/21 페르소나 평가: '축제 언제야'에 2025학년도 축제 공지 하나로 '9월 30일 13시부터'라고 올해 일정처럼 답했다.
+    """
+    # '최대 몇 학기까지'처럼 규정을 묻는 말에는 붙이지 않는다 (같은 평가: 휴학 규정 답에 '2023년 자료'가 붙음)
+    if not any(w in question for w in ("언제", "날짜", "일정", "며칠", "몇 일")):
+        return answer
+    ds = [d for h in used for d in _dates(h["meta"].get("title", "") + " " + h["document"][:400])]
+    stale = (now - timedelta(days=180)).strftime("%Y-%m-%d")
+    if not ds or max(ds) >= stale:
+        return answer
+    return f"올해 일정은 아직 올라오지 않았어요. 가장 최근 자료({max(ds)[:4]}년) 기준으로 알려 드려요.\n{answer}"
+
+
+_CLUB_LIST = ("뭐있", "뭐 있", "뭐가 있", "목록", "종류", "어떤", "알려", "몇 개", "몇개", "있어", "있나", "추천", "신청할")
+# 분과를 가리키는 말 → 동아리현황의 분과 이름에 들어 있는 말
+_CLUB_GROUP = {"운동": "체육", "체육": "체육", "스포츠": "체육", "종교": "종교", "신앙": "종교", "공연": "공연",
+               "예술": "공연", "음악": "공연", "밴드": "공연", "학술": "학술", "공부": "학술", "봉사": "봉사"}
+
+
+def _club_list(question: str) -> tuple[str, list[dict]] | None:
+    """동아리 목록 질문은 동아리현황(분과별 목록)에서 코드로 답한다.
+
+    11/21 페르소나 평가: '학교 동아리 뭐있냐 지금 신청할만한거 아산'에 sLLM이 종교 분과 둘(C.C.C, S.F.C)만 답했다.
+    '운동 동아리'처럼 분과를 말하면 그 분과만, 아니면 전체 분과를 보여 준다. 동아리 하나를 물으면(이름이 있으면) 일반 검색으로.
+    """
+    if "동아리" not in question or not any(w in question for w in (*_CLUB_LIST, *_CLUB_GROUP)):
+        return None
+    with db.connect() as con:
+        row = con.execute("SELECT content, source_url, menu_path, collected_at FROM chunk "
+                          "WHERE title = '동아리현황' LIMIT 1").fetchone()
+        names = [r["title"].split(": ", 1)[-1] for r in
+                 con.execute("SELECT DISTINCT title FROM chunk WHERE title LIKE '동아리: %'").fetchall()]
+    if row is None or any(n and n.lower() in question.lower() for n in names):
+        return None
+    groups = [ln.strip() for ln in row["content"].split("\n") if re.match(r"^\S.*분과:", ln.strip())]
+    if not groups:
+        return None
+    want = {v for k, v in _CLUB_GROUP.items() if k in question}
+    total = re.search(r"(\d+)개의 동아리", row["content"])
+    if want:
+        picked = [g for g in groups if any(w in g.split(":")[0] for w in want)]
+        if not picked:
+            return None
+        text = "\n".join(f"· {g}" for g in picked)
+    else:
+        head = f"동아리는 모두 {total[1]}개이고, 분과별로 다음과 같습니다." if total else "분과별 동아리입니다."
+        text = head + "\n" + "\n".join(f"· {g}" for g in groups)
+    src = [{"title": "동아리현황", "kind": "학교 홈페이지", "source_url": row["source_url"], "menu_path": row["menu_path"],
+            "collected_at": row["collected_at"], "label": "유원대: 동아리현황"}]
+    return text + "\n\n모집 시기와 가입 방법은 총동아리연합회(명현관 2층)에 문의해 주세요.", src
 
 
 def _with_club_summary(hits: list[dict]) -> list[dict]:
@@ -349,6 +484,104 @@ def _with_club_summary(hits: list[dict]) -> list[dict]:
                         "source_url": row["source_url"], "menu_path": row["menu_path"] or "",
                         "collected_at": row["collected_at"]}}
     return [summary] + [h for h in hits if h["id"] != row["chunk_id"]]
+
+
+# 검색에서 뺄 말투 (뜻이 없는 말이 붙으면 점수가 기준 0.55 밑으로 떨어진다)
+_CHAT_WORDS = set("아직 맞지 맞아 맞나요 받아 받나 받나요 쉬는 날 혹시 그럼 근데 그거 이거 진짜 혹시나 거 건가 건가요 인가요 "
+                  "있음 함 하나 하나요 해 해요 돼 되나 되나요 됨 임 야 요".split())
+_TWO_Q = re.compile(r"(언제|얼마|몇\s*\S*|어디|누구)(이고|고|이랑|랑|하고)\s+")
+
+
+def _search_hits(question: str, qvec: list[float], where: dict | None) -> list[dict]:
+    """검색. 질문 두 개를 한 문장에 물으면 나눠서 찾고, 아무것도 안 걸리면 말투를 뺀 핵심어로 한 번 더 찾는다.
+
+    11/21 페르소나 평가
+    - '1학기 수강신청 언제고 등록금 납부는 언제야?': 근거 3개가 모두 수강신청 쪽이라 등록금을 다른 공지로 답했다
+    - '선관위 지원 아직 받아?'(0.51), '신정 쉬는 날 맞지?'(0.52): 맞는 자료가 1위인데 기준 0.55에 못 미쳐 근거없음
+    """
+    if _TWO_Q.search(question):
+        first, second = _split_two(question)        # '1학기 … 언제고 등록금은 언제야' → 둘째 질문도 1학기로
+        a = _ranked_hits(index.embed([first])[0], where, first)
+        b = _ranked_hits(index.embed([second])[0], where, second)
+        if a and b:
+            # 두 질문의 근거를 번갈아 넣는다 (근거는 앞에서 CONTEXT_K개만 sLLM에 넘어감)
+            out, seen = [], set()
+            for pair in zip(a + [None] * len(b), b + [None] * len(a)):
+                for h in pair:
+                    if h and h["id"] not in seen:
+                        seen.add(h["id"])
+                        out.append(h)
+            return out
+    hits = _ranked_hits(qvec, where, question)
+    core = " ".join(t for t in re.findall(r"[가-힣A-Za-z0-9]+", question) if t not in _CHAT_WORDS
+                    and not re.fullmatch(r".+(지|야|어|아|냐|니)", t) or t in clarifier.TOPICS)
+    kw = _keyword_hits(core or question, where)
+    if not kw:
+        return hits
+    if not hits:
+        return _rerank(question, kw, _now())[:config.TOP_K]
+    # 검색 결과에 없던, 드문 핵심어가 제목에 그대로 든 공지를 같은 점수로 후보에 넣고 날짜로 다시 줄 세운다
+    # ('선관위 지원 아직 받아?': 검색엔 2025학년도 공고만, 2027학년도 신청 안내는 0.52로 빠졌음)
+    ids = {h["id"] for h in hits}
+    extra = [{**h, "score": hits[0]["score"]} for h in kw if h["id"] not in ids][:2]
+    return _rerank(question, hits + extra, _now())
+
+
+def _llm_checked(question: str, contexts: list[str], used: list[dict], now: datetime) -> str:
+    """sLLM 답 + 근거에 없는 값이면 근거없음 + 지난 자료면 연도 표시."""
+    text = llm.answer(question, contexts, _now_text(now))
+    if text and not llm.is_not_found(text):
+        text = _keep_grounded(text, contexts)
+        text = _stale_note(question, text, used, now) if text else NOT_FOUND_ANSWER
+    return text
+
+
+def _split_two(question: str) -> tuple[str, str]:
+    m = _TWO_Q.search(question)
+    first, second = question[:m.end(1)], question[m.end():]
+    sem = re.search(r"[12]\s*학기|\d{4}학년도", first)
+    if sem and not re.search(r"[12]\s*학기|\d{4}학년도", second):
+        second = f"{sem[0]} {second}"
+    return first, second
+
+
+def _keyword_hits(core: str, where: dict | None) -> list[dict]:
+    """제목 키워드 검색. 임베딩은 짧은 키워드 질문에 점수가 낮다 ('신정' 0.53, '선거관리위원회' 0.54, 기준 0.55).
+
+    제목 10개 이하에만 나오는 드문 핵심어가 모두 제목에 든 조각만, 최근 게시 순.
+    자료에 아예 없는 말이 하나라도 있으면 아무것도 돌려주지 않는다 (없는 걸 물었는데 엉뚱한 공지로 답하지 않게).
+    """
+    conds = where.get("$and", [where]) if where else []
+    if any("category" in c for c in conds):
+        return []
+    campus = next((c["campus"]["$in"] for c in conds if "campus" in c), None)
+    words = [w for w in core.split() if len(w) >= 2 and w not in clarifier.FILLER and w not in _WHEN]
+    if not words:
+        return []
+    found: dict[str, dict] = {}
+    rare = 0
+    with db.connect() as con:
+        for w in words:
+            rows = con.execute("SELECT chunk_id, title, content, source_url, menu_path, collected_at, campus, category, "
+                               "posted_at FROM chunk WHERE title LIKE ? AND category != 'Q&A' LIMIT 11", (f"%{w}%",)).fetchall()
+            if not rows:
+                return []          # 자료에 한 번도 안 나오는 말('비자', '와이파이')을 물으면 키워드로 찾지 않는다
+            if len(rows) > 10:
+                continue           # 흔한 말('지원', '신청')은 고르는 데 쓰지 않는다
+            rare += 1
+            for r in rows:
+                if campus and r["campus"] not in (*campus, None, ""):
+                    continue
+                h = found.setdefault(r["chunk_id"], {"id": r["chunk_id"], "n": 0, "posted": r["posted_at"] or "",
+                                                     "score": config.MIN_SCORE, "document": r["content"],
+                                                     "meta": {"title": r["title"], "category": r["category"],
+                                                              "campus": r["campus"] or "공통", "source_url": r["source_url"],
+                                                              "menu_path": r["menu_path"] or "",
+                                                              "collected_at": r["collected_at"]}})
+                h["n"] += 1
+    # 드문 말이 모두 제목에 든 것만
+    ranked = sorted((h for h in found.values() if rare and h["n"] == rare), key=lambda h: h["posted"], reverse=True)
+    return ranked[:config.TOP_K]
 
 
 def _ranked_hits(qvec: list[float], where: dict | None, question: str = "") -> list[dict]:
@@ -373,7 +606,8 @@ def _ranked_hits(qvec: list[float], where: dict | None, question: str = "") -> l
 _CONTEST_WORDS = ("공모전", "경진대회", "콘테스트", "공모", "해커톤")
 _CONTEST_TITLE = ("공모전", "경진대회", "콘테스트", "대회")     # 목록에 넣을 제목 ('기관 공모', '논문 공모'는 학생 공모전이 아님)
 _MONTH_DAY = re.compile(r"(?<!\d)(\d{1,2})월\s*(\d{1,2})일")
-_LIST_WORDS = ("요즘", "진행", "모집", "지금", "현재", "뭐있", "있어", "있나", "목록", "알려", "종류", "어떤", "마감", "임박", "빠른", "언제")
+_LIST_WORDS = ("요즘", "진행", "모집", "지금", "현재", "뭐있", "있어", "있나", "목록", "알려", "종류", "어떤", "마감", "임박", "빠른", "언제",
+               "정보", "찾", "추천", "보여")
 _CONTEST_STOP = set("공모전 경진대회 콘테스트 공모 요즘 하는 지금 현재 진행 진행중 중인 모집 모집중 뭐 뭐가 있어 있어? 있나 있나요 "
                     "알려줘 알려줘봐 알려 주세요 목록 종류 어떤 거 것 좀 학교 우리 참여 참가 할 수 있는".split())
 _ORDER_WORDS = set("가장 제일 빠른 빠른순 날짜 마감 마감일 임박 곧 순서 먼저 언제 언제까지 기간 일정 최근 새로운".split())
@@ -385,7 +619,14 @@ def _contest_intent(question: str) -> bool:
     compact = question.replace(" ", "")
     if not any(w in compact for w in _CONTEST_WORDS):
         return False
-    only = all(t in clarifier.FILLER or any(w in t for w in _CONTEST_WORDS) for t in clarifier._tokens(question))
+    toks = clarifier._tokens(question)
+    only = all(t in clarifier.FILLER or any(w in t for w in _CONTEST_WORDS) for t in toks)
+    # 11/21 페르소나 평가: '대학혁신지원사업 사례영상 경진대회는 언제까지 접수해요?'처럼 특정 공모전을 물으면
+    # 목록이 아니라 그 공지로 답한다 (공모전·목록 말이 아닌 내용어가 셋 이상)
+    content = [t for t in toks if len(t) >= 2 and t not in _ORDER_WORDS and not any(w in t for w in _CONTEST_WORDS)
+               and not any(w in t for w in _LIST_WORDS)]
+    if len(content) >= 3:
+        return False
     return only or any(w in compact for w in _LIST_WORDS)
 
 
@@ -474,7 +715,12 @@ def _contest_list(question: str, campus: str | None, now: datetime, dept: str | 
     kw = departments.keywords(dept)
     # 11/21: '가장 빠른 공모전 날짜좀'의 '가장 빠른 날짜좀'을 주제어로 잘못 보고 '관련 공모전이 없다'고 답했다.
     # 순서·날짜를 묻는 말과 끝에 붙은 '좀'은 주제어에서 뺀다
-    words = [re.sub(r"좀$", "", w) for w in re.findall(r"[가-힣A-Za-z0-9]+", question)]
+    # '스마트팜공모전'처럼 붙여 쓴 공모전 말은 떼고 본다
+    def _strip(w):
+        w = re.sub(r"좀$", "", w)
+        cut = re.sub(r"(공모전|경진대회|콘테스트)$", "", w)
+        return cut if len(cut) >= 2 else w       # '해커톤'은 그 자체가 주제어라 남긴다
+    words = [_strip(w) for w in re.findall(r"[가-힣A-Za-z0-9]+", question)]
     words = [w for w in words if w not in _CONTEST_STOP and not any(w.startswith(o) for o in _ORDER_WORDS) and len(w) >= 2
              and not (dept and (w in dept or dept in w))]
     soonest = any(w in question.replace(" ", "") for w in _SOONEST)
@@ -586,7 +832,13 @@ def _contest_list(question: str, campus: str | None, now: datetime, dept: str | 
 
 # 학생들이 쓰는 줄임말을 풀어서 검색·FAQ·규칙이 알아보게 한다 (11/20: '통버 무료임?'이 통학버스 FAQ에 안 걸림)
 _ABBR = [(re.compile(r"통버"), "통학버스"), (re.compile(r"아캠"), "아산캠퍼스"), (re.compile(r"영캠"), "영동캠퍼스"),
-         (re.compile(r"셔틀(?!버스)"), "셔틀버스"), (re.compile(r"계절(?!학기)"), "계절학기")]
+         (re.compile(r"셔틀(?!버스)"), "셔틀버스"), (re.compile(r"계절(?!학기)"), "계절학기"),
+         # 11/21 페르소나 평가: '국장 1차 신청 시작했어?'가 근거없음 ('국장님'·'국장실'은 그대로)
+         (re.compile(r"국장(?![님실])"), "국가장학금"), (re.compile(r"근장"), "국가근로장학금"),
+         (re.compile(r"분납"), "분할납부"),
+         # 같은 평가: '기말 언제부터'가 근거없음, '선관위 지원 아직 받아?'가 근거없음
+         (re.compile(r"기말(?!고사)"), "기말고사"), (re.compile(r"중간(?=\s*(언제|시험|기간))"), "중간고사"),
+         (re.compile(r"선관위"), "선거관리위원회")]
 # 서로 다른 대상: 질문에 한쪽이 있는데 FAQ 질문에 그 말이 없으면 FAQ를 쓰지 않는다
 # (11/20: '시내버스 요금 얼마야?'가 '통학버스 요금은 얼마인가요?' FAQ에 0.82로 걸려 '무료'라고 답할 뻔함)
 _DISTINCT = [("시내버스", "통학버스", "셔틀버스", "고속버스"), ("국가장학금", "교내장학금"), ("아산", "영동")]
@@ -656,6 +908,12 @@ def ask(question: str, category: str | None = None, campus: str | None = None,
                 "title": "학교 구내식당", "kind": "학교 홈페이지", "source_url": "https://www.u1.ac.kr/u1/life/cafeteria.do",
                 "menu_path": "홈 > 대학생활 > 학교 구내식당", "collected_at": None, "label": "유원대: 학교 구내식당"}])
 
+    if result["answer_type"] == "근거없음" and not any(w in question for w in _CONTEST_WORDS):
+        clubs = _club_list(question)
+        if clubs:
+            answered_by = "clubs"
+            result.update(answer_type="문서", answer=clubs[0], sources=clubs[1])
+
     if result["answer_type"] == "근거없음" and _contest_intent(question):
         # 질문에 적힌 학과가 우선. 직접 적은 학과는 줄임말도 알아본다 (예: '간호' → 간호학과)
         dept = departments.find_in(question) or (department and departments.find_in(department)) or department
@@ -668,7 +926,7 @@ def ask(question: str, category: str | None = None, campus: str | None = None,
         if category:
             cond = {"category": category}
             where = {"$and": [where, cond]} if where else cond
-        hits = _ranked_hits(qvec, where, question)
+        hits = _search_hits(question, qvec, where)
         if (not hits or hits[0]["meta"].get("category") != "통학버스") and _bus_intent(question):
             # 버스 질문인데 일반 검색에서 시간표가 기준값을 못 넘으면, 통학버스 청크만 따로 찾는다.
             # 시간표에 실제로 있는 정류장이 질문에 나올 때만 쓴다 (아래 _timetable_query가 확인)
@@ -691,7 +949,7 @@ def ask(question: str, category: str | None = None, campus: str | None = None,
                 text = _timetable_answer(tq, contexts[0].split("\n", 1)[0])
                 answered_by = "timetable"
             elif config.USE_LLM:
-                text = llm.answer(question, contexts, _now_text(now))
+                text = _llm_checked(question, contexts, used, now)
                 answered_by = "llm"
             else:
                 text = contexts[0][:400]
