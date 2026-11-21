@@ -121,13 +121,41 @@ def buses(f: Fetcher) -> list[Chunk]:
     return out
 
 
+_CLUB_ALIAS = {"체육": "체육·운동", "공연&예술": "공연·예술·음악", "종교": "종교·신앙"}
+
+
 def clubs(f: Fetcher) -> list[Chunk]:
+    """동아리현황: 분과별 이름 요약 1건 + 동아리마다 1건 (소속 분과를 붙임).
+
+    11/19: 페이지가 분과 탭(공연&예술·학술·봉사·체육·종교)으로 나뉘는데 예전엔 글만 이어 붙여서 분과 정보가 사라졌다.
+    그래서 '운동 동아리'에 종교 동아리를 답하고, '풋살 동아리는 뭐 해?'는 여러 동아리가 섞인 조각이라 점수가 낮아 못 찾았다.
+    """
     path, menu = CLUBS
     url = BASE_URL + path
-    lines = text_lines(cms_content(f.get(url)))
-    return [Chunk(_id(url, i), "동아리·행사", "동아리현황", text, url, now_kst(),
-                  {"campus": "공통", "posted_at": None, "menu_path": menu})
-            for i, text in enumerate(pack("[동아리현황] 유원대학교 동아리 소개", lines))]
+    content = cms_content(f.get(url))
+    meta = {"campus": "공통", "posted_at": None, "menu_path": menu}
+    first = content.select_one(".con-box")                    # 맨 위 소개 문단 (분과 수, 동아리연합회 사무실)
+    intro = [clean(p.get_text(" ")) for p in first.select("p")] if first else []
+    tabs = {a["href"].lstrip("#"): clean(a.get_text(" ")) for a in content.select("a[href^='#uiTabCon']")}
+    out, groups = [], []
+    for pane_id, group in tabs.items():
+        pane = content.select_one(f"#{pane_id}")
+        if pane is None:
+            continue
+        label = _CLUB_ALIAS.get(group, group)
+        names = []
+        for li in pane.select("li"):
+            name_tag = li.select_one(".photo p")
+            if not name_tag:
+                continue
+            name = clean(name_tag.get_text(" "))
+            desc = [clean(p.get_text(" ")) for p in li.select(".txt-box p")]
+            names.append(name)
+            text = f"[동아리] {name} ({label} 분과 동아리)\n" + "\n".join(d for d in desc if d)
+            out.append(Chunk(_id(url, "club", name), "동아리·행사", f"동아리: {name}", text, url, now_kst(), meta))
+        groups.append(f"{label} 분과: {', '.join(names)}")
+    summary = "\n".join(["[동아리현황] 유원대학교 동아리 목록", *intro, *groups])
+    return [Chunk(_id(url, "summary"), "동아리·행사", "동아리현황", summary, url, now_kst(), meta)] + out
 
 
 def collect_all(f: Fetcher, notice_pages: int = 2) -> list[Chunk]:
