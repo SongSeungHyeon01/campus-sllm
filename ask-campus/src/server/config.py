@@ -1,5 +1,6 @@
 """서버 설정. 값은 환경 변수로 바꿀 수 있다."""
 import os
+import secrets
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]          # ask-campus/
@@ -29,4 +30,6 @@ PENDING_DAYS = 30         # 답변 대기 만료 (AVL-008)
 
 # 관리 웹 임시 로그인. 이메일 인증 코드(FR-033)는 발송 계정이 정해진 뒤 붙인다.
 ADMIN_PASSWORD = os.getenv("ASK_ADMIN_PASSWORD", "")
-SECRET = os.getenv("ASK_SECRET", "dev-only-change-me")
+# 관리 웹 쿠키 서명 키. 예전 기본값('dev-only-change-me')은 공개 리포에 적혀 있어 누구나 관리자 쿠키를 만들 수 있었다.
+# 값을 주지 않으면 실행할 때마다 무작위로 만든다 (서버를 다시 켜면 관리 웹에 다시 로그인).
+SECRET = os.getenv("ASK_SECRET") or secrets.token_hex(32)

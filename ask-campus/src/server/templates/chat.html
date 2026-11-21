@@ -19,6 +19,14 @@
   .bot { background:var(--tint); border-bottom-left-radius:4px; }
   .meta { font-size:12px; color:var(--muted); margin-top:6px; white-space:normal; }
   .meta a { color:var(--navy); }
+  .fb { margin-top:8px; display:flex; gap:6px; align-items:center; font-size:13px; color:var(--muted); white-space:normal; }
+  .fb-btn { font:inherit; font-size:12px; padding:3px 10px; border:1px solid var(--line); border-radius:12px;
+            background:#fff; color:var(--muted); cursor:pointer; }
+  .fb-in { flex:1; font:inherit; font-size:13px; padding:5px 8px; border:1px solid var(--line); border-radius:8px; }
+  .choices { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; white-space:normal; }
+  .choice { font:inherit; font-size:14px; padding:6px 12px; border:1px solid var(--line); border-radius:16px;
+            background:#fff; color:var(--navy); cursor:pointer; }
+  .choice:disabled { opacity:.5; cursor:default; }
   form { display:flex; gap:8px; padding:12px 16px; border-top:1px solid var(--line); }
   #q { flex:1; font:inherit; padding:12px 14px; border:1px solid var(--line); border-radius:12px; }
   button { font:inherit; padding:0 18px; border:0; border-radius:12px; background:var(--navy); color:#fff; cursor:pointer; }
@@ -45,17 +53,57 @@ function add(cls, text) {
   const d = document.createElement('div'); d.className = 'msg ' + cls; d.textContent = text;
   log.appendChild(d); log.scrollTop = log.scrollHeight; return d;
 }
-document.getElementById('f').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const text = q.value.trim(); if (!text) return;
-  add('me', text); q.value = ''; send.disabled = true;
+// 되묻기(FR-027)에서 고른 학과. 이 화면을 닫기 전까지만 기억하고 서버에는 질문할 때만 보낸다
+let department = null;
+
+// 되묻기 선택지를 버튼으로. department는 학과를 기억하고 같은 질문을 다시, refine은 원래 질문에 고른 말을 붙여 다시 묻는다
+function addChoices(box, clarify, original) {
+  if (!clarify.options || !clarify.options.length) return;
+  const wrap = document.createElement('div'); wrap.className = 'choices';
+  for (const opt of clarify.options) {
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'choice'; b.textContent = opt;
+    b.addEventListener('click', () => {
+      wrap.querySelectorAll('button').forEach(x => x.disabled = true);
+      if (clarify.field === 'department') { department = opt; ask(original, `${opt} 선택`); }
+      else ask(opt.includes(original) ? opt : `${original} ${opt}`);
+    });
+    wrap.appendChild(b);
+  }
+  box.appendChild(wrap);
+}
+
+// '답이 이상해요': 누르면 무엇이 틀렸는지 한 줄 적게 하고, 관리 웹 '답변 피드백'으로 보낸다
+function addFeedback(box, logId) {
+  const wrap = document.createElement('div'); wrap.className = 'fb';
+  const b = document.createElement('button'); b.type = 'button'; b.className = 'fb-btn'; b.textContent = '답이 이상해요';
+  b.addEventListener('click', () => {
+    b.remove();
+    const input = document.createElement('input'); input.maxLength = 300; input.className = 'fb-in';
+    input.placeholder = '무엇이 틀렸나요? (선택)';
+    const ok = document.createElement('button'); ok.type = 'button'; ok.className = 'fb-btn'; ok.textContent = '보내기';
+    ok.addEventListener('click', async () => {
+      ok.disabled = true;
+      try {
+        await fetch('/api/v1/feedback', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ log_id: logId, comment: input.value.trim() }) });
+        wrap.textContent = '알려 주셔서 고마워요. 확인해서 고칠게요.';
+      } catch (e) { wrap.textContent = '보내지 못했어요.'; }
+    });
+    wrap.append(input, ok); input.focus();
+  });
+  wrap.appendChild(b); box.appendChild(wrap);
+}
+
+async function ask(text, shown) {
+  add('me', shown || text); send.disabled = true;
   const wait = add('bot', '답을 찾는 중…');
   try {
     const r = await fetch('/api/v1/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question: text, campus: document.getElementById('campus').value }) });
+      body: JSON.stringify({ question: text, campus: document.getElementById('campus').value, department }) });
     const d = await r.json();
     if (!r.ok) { wait.textContent = (d.error && d.error.message) || '오류가 났어요.'; return; }
     wait.textContent = d.answer;
+    if (d.clarify) { addChoices(wait, d.clarify, text); return; }
     const meta = document.createElement('div'); meta.className = 'meta';
     meta.append(`${d.answer_type} · ${(d.elapsed_ms / 1000).toFixed(1)}초`);
     for (const s of d.sources || []) {
@@ -65,9 +113,17 @@ document.getElementById('f').addEventListener('submit', async (e) => {
       else meta.append(s.label || s.title);
     }
     wait.appendChild(meta);
+    if (d.log_id) addFeedback(wait, d.log_id);
   } catch (err) { wait.textContent = '서버에 연결하지 못했어요.'; }
   finally { send.disabled = false; q.focus(); log.scrollTop = log.scrollHeight; }
+}
+
+document.getElementById('f').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const text = q.value.trim(); if (!text) return;
+  q.value = ''; ask(text);
 });
+document.getElementById('campus').addEventListener('change', () => { department = null; });   // 캠퍼스가 바뀌면 학과도 다시 묻는다
 </script>
 </body>
 </html>

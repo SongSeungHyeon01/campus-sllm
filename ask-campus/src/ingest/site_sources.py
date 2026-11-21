@@ -58,8 +58,14 @@ COVERED = ("/u1/academic/academic-calendar.do", "/u1/life/bus01.do", "/u1/life/b
 # 글이 거의 없는 페이지 (사진·영상·로고·교가·시험 페이지 등)
 SKIP = re.compile(r"(gallery|photo|movie|video|promotional-video|logo|color|signature|symbol|song|test\d|sitemap|"
                   r"privacy|email\.do|policy\.do|academic-calendar-past|bidding)", re.I)
-# 학생이 글을 쓰는 게시판: 개인정보 가림
-STUDENT_BOARDS = re.compile(r"(free|qna|q-a|board|communication|compliment|report|counsel)", re.I)
+SKIP_TITLE = re.compile(r"^test\b", re.I)               # 'test 공지사항' 같은 시험용 글
+# 학생이 글을 쓰는 게시판: 수집하되 글쓴이 이름·학번·전화번호·이메일을 가린다.
+# 11/20: 처음엔 복학 신청·칭찬합니다·자랑스러운 동문('학번 이름' 제목)·입학상담을 가림 없이 모았다가 빼었고,
+#        사용자 결정으로 다시 수집하되 가리는 쪽으로 바꿨다 (오류보고서 2026-11-20_student-posts-crawled.md)
+STUDENT_BOARDS = re.compile(r"(free|qna|q-a|board|communication|compliment|report|counsel|reinstatement|"
+                            r"proud-alumni|admissions)", re.I)
+# 학번을 가린 뒤 바로 붙은 이름 ('*** 문대희' → '*** ○○○'). 이름 뒤가 공백·쉼표·끝일 때만 ('연락주세요'는 이름이 아님)
+_NO_THEN_NAME = re.compile(r"\*\*\*\s+([가-힣]{2,4})(?=[\s,)]|$)")
 MAIN_CATEGORY = {"academic": "학사정보", "life": "대학생활", "community": "공지", "administration": "대학행정",
                  "introduction": "대학소개", "guide": "안내"}
 ARTICLE = re.compile(r"articleNo=(\d+)")
@@ -133,12 +139,20 @@ def _board(f: Fetcher, url: str, first_html: str, title_prefix: str, category: s
             titles = [clean(t.get_text(" ")) for t in view.select(".b-title-box")]
             bodies = view.select(".b-content-box")
             title = titles[0] if titles else clean(a.get_text(" "))
+            if SKIP_TITLE.search(title):
+                continue
             lines = [ln for b in bodies for ln in text_lines(b)] or [title]
             files = [clean(x.get_text(" ")) for x in view.select(".b-file-box a")]
             if files:
                 lines.append("첨부파일: " + ", ".join(files))
             if private:
-                lines, title = [mask(x) for x in lines], mask(title)
+                # 목록의 글쓴이 이름도 본문·제목에서 가린다
+                writer = clean(row.select_one(".b-writer").get_text(" ")) if row.select_one(".b-writer") else ""
+                names = tuple(n for n in writer.split() if re.fullmatch(r"[가-힣]{2,4}", n))
+
+                def hide(x: str) -> str:
+                    return _NO_THEN_NAME.sub("*** ○○○", mask(x, names))
+                lines, title = [hide(x) for x in lines], hide(title)
             header = f"[{title_prefix}] {title} (게시일 {posted or '미상'})"
             for i, text in enumerate(pack(header, lines)):
                 out.append(Chunk(_id(view_url, i), category, f"{title_prefix}: {title}", text, view_url, now_kst(),

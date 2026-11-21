@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}답변 피드백{% endblock %}
+{% block main %}
+<h1>답변 피드백</h1>
+<p class="sub">학생이 채팅에서 '답이 이상해요'를 누른 답변입니다. 올바른 답을 적으면 FAQ로 바로 반영하거나, 모아서 모델 학습(파인튜닝) 데이터로 씁니다.</p>
+{% if done %}<div class="ok">저장했습니다.</div>{% endif %}
+<div class="cards">
+  {% for s in ['대기', '고침', '제외'] %}
+  <a class="card" href="/admin/feedback?status={{ s }}" style="text-decoration:none;color:inherit;{{ 'border-color:var(--navy)' if s == status }}">
+    <div class="k">{{ s }}</div><div class="v">{{ counts.get(s, 0) }}</div>
+  </a>
+  {% endfor %}
+</div>
+{% if rows %}
+<table>
+  <tr><th>질문</th><th>받은 답</th><th style="width:180px">학생 의견</th><th style="width:110px">날짜</th><th style="width:90px"></th></tr>
+  {% for r in rows %}
+  <tr>
+    <td>{{ r.question }}<div class="sub" style="margin:4px 0 0;font-size:13px">{{ r.campus or '-' }} · {{ r.answer_type }}</div></td>
+    <td>{{ (r.answer or '')[:160] }}{% if r.corrected_answer %}<div class="sub" style="margin:6px 0 0;font-size:13px">고친 답: {{ r.corrected_answer[:120] }}</div>{% endif %}</td>
+    <td>{{ r.comment or '' }}</td>
+    <td>{{ r.created_at[:10] }}</td>
+    <td><a class="btn" href="/admin/feedback/{{ r.feedback_id }}">{{ '고치기' if status == '대기' else '보기' }}</a></td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="empty">'{{ status }}' 상태의 피드백이 없습니다.</p>
+{% endif %}
+{% endblock %}

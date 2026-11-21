@@ -52,6 +52,21 @@ CREATE TABLE IF NOT EXISTS faq (
     indexed_at DATETIME,
     vec        BLOB
 );
+-- 답변 피드백: 채팅에서 '답이 이상해요'를 누른 답을 모으고, 관리 웹에서 올바른 답을 적는다.
+-- 고친 답은 FAQ로 바로 반영하거나(사실 정보), 파인튜닝 데이터로 내보낸다(답하는 방식, scripts/export_sft.py).
+CREATE TABLE IF NOT EXISTS answer_feedback (
+    feedback_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    log_id           INTEGER REFERENCES query_log(log_id),
+    question         VARCHAR(200) NOT NULL,
+    campus           VARCHAR(10),
+    answer_type      VARCHAR(10),
+    answer           TEXT,
+    comment          VARCHAR(300),
+    corrected_answer TEXT,
+    status           VARCHAR(10) NOT NULL DEFAULT '대기',
+    created_at       DATETIME NOT NULL,
+    handled_at       DATETIME
+);
 CREATE TABLE IF NOT EXISTS query_log (
     log_id      INTEGER PRIMARY KEY AUTOINCREMENT,
     question    VARCHAR(200) NOT NULL,
@@ -96,6 +111,11 @@ def init():
             cols = {r["name"] for r in con.execute(f"PRAGMA table_info({table})")}
             if "vec" not in cols:
                 con.execute(f"ALTER TABLE {table} ADD COLUMN vec BLOB")
+        # 11/20: 답변 피드백용으로 질문 기록에 답과 sLLM 근거(JSON)를 남긴다
+        cols = {r["name"] for r in con.execute("PRAGMA table_info(query_log)")}
+        for col in ("answer", "contexts"):
+            if col not in cols:
+                con.execute(f"ALTER TABLE query_log ADD COLUMN {col} TEXT")
 
 
 def expires_from(ts: str) -> str:

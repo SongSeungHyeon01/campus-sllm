@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}답변 고치기{% endblock %}
+{% block main %}
+<h1>답변 고치기</h1>
+<p class="sub">{{ row.created_at[:16].replace('T', ' ') }} · {{ row.campus or '캠퍼스 없음' }} · 상태: {{ row.status }}</p>
+
+<label>학생 질문</label>
+<div class="notice" style="margin:0">{{ row.question }}</div>
+
+<label>받은 답 ({{ row.answer_type }}{{ ', 시간표 계산' if ctx.by == 'timetable' }}{{ ', sLLM' if ctx.by == 'llm' }})</label>
+<div class="notice" style="margin:0;white-space:pre-wrap">{{ row.answer }}</div>
+
+{% if row.comment %}
+<label>학생 의견</label>
+<div class="notice" style="margin:0">{{ row.comment }}</div>
+{% endif %}
+
+{% if ctx.contexts %}
+<details style="margin-top:18px">
+  <summary style="cursor:pointer;font-weight:700">sLLM이 본 근거 {{ ctx.contexts|length }}건 (펼치기)</summary>
+  {% for c in ctx.contexts %}<div class="notice" style="white-space:pre-wrap;font-size:13px">{{ c[:1200] }}</div>{% endfor %}
+</details>
+{% endif %}
+
+<form method="post" action="/admin/feedback/{{ row.feedback_id }}">
+  <label for="a">올바른 답</label>
+  <textarea id="a" name="corrected_answer" required placeholder="학생에게 이렇게 답했어야 합니다.">{{ row.corrected_answer or '' }}</textarea>
+  <p class="sub" style="margin:8px 0 0;font-size:13px">근거에 답이 없으면 "해당 정보를 찾을 수 없습니다."라고 적으면 됩니다. 이런 예시도 모델이 '모르면 모른다'를 배우는 데 쓰입니다.</p>
+  <label style="font-weight:400"><input type="checkbox" name="add_faq" value="1"> 사실 정보라서 FAQ에도 바로 넣기 (같은 질문에 이 답을 그대로 씀)</label>
+  <select name="category" style="max-width:240px">
+    {% for c in categories %}<option>{{ c }}</option>{% endfor %}
+  </select>
+  <div style="display:flex;gap:8px;margin-top:20px">
+    <button class="btn primary" type="submit">저장</button>
+    <a class="btn ghost" href="/admin/feedback">목록으로</a>
+  </div>
+</form>
+<form method="post" action="/admin/feedback/{{ row.feedback_id }}/dismiss" style="margin-top:12px">
+  <button class="btn ghost" type="submit">고칠 필요 없음 (제외)</button>
+</form>
+{% endblock %}

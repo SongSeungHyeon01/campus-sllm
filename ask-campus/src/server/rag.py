@@ -6,13 +6,14 @@
 
 청크는 Chroma에서, FAQ·답변 대기는 SQLite vec 열에서 찾는다 (db.py 설명 참고).
 """
+import json
 import re
 import time
 from datetime import datetime, timedelta
 
 import numpy as np
 
-from . import config, db, index, llm
+from . import cafeteria, clarifier, config, db, departments, external, index, llm
 
 SOURCE_GAP = 0.04          # 출처로 보여 줄 근거의 점수 차이 한도
 
@@ -96,7 +97,9 @@ def _bus_table(hits: list[dict], question: str, now: datetime) -> tuple[list[str
         header = h["document"].split("\n", 1)[0]
         weekend_page = "주말" in h["meta"].get("title", "")
         page_ok = weekend_page == (day in ("주말", "방학"))
-        table_ok = ("방학중" in header) == (day == "방학")
+        # 페이지 이름 '(주말·공휴일·방학)' 뒤의 표 이름만 본다. 11/20: 영동 '(방학 기간 …)' 표를 '방학중'이 아니라서
+        # 주말 표로 잘못 골라 주말 첫차를 8:00(방학 표)으로 답했다
+        table_ok = ("방학" in header.split("] ", 1)[-1]) == (day == "방학")
         return page_ok, table_ok, h["score"]
 
     best = max(bus, key=rank)
@@ -114,7 +117,8 @@ _NEXT_HINTS = ("가장 빠른", "제일 빠른", "빠른 차", "다음", "지금
 _HHMM = re.compile(r"(\d{1,2}):(\d{2})")
 
 
-_GENERIC_STOPS = ("학교",)      # '학교 가는'처럼 목적지로도 쓰여서, 다른 정류장이 있으면 무시
+# '학교 가는'·'아캠(→아산캠퍼스)'처럼 목적지로도 쓰여서, 다른 정류장이 있으면 무시
+_GENERIC_STOPS = ("학교", "아산캠퍼스", "영동캠퍼스")
 
 
 def _stop_of(key: str, question: str) -> str:
@@ -126,7 +130,9 @@ def _stop_of(key: str, question: str) -> str:
     tokens = [t for t in re.sub(r"\(.*?\)", " ", key).split() if t]
     if tokens and tokens[-1] in ("출발", "도착") and len(tokens) > 1:
         tokens = tokens[:-1]
-    names = [n for n in ("".join(tokens[-2:]), tokens[-1] if tokens else "") if len(n) >= 2]
+    # '(등교) 천안터미널 천안터미널'처럼 같은 말이 두 번이면 붙이지 않는다 (11/20: '천안터미널천안터미널에서'로 답함)
+    joined = "".join(dict.fromkeys(tokens[-2:]))
+    names = [n for n in (joined, tokens[-1] if tokens else "") if len(n) >= 2]
     hit = [n for n in names if any(a in question for a in _aliases(n))]
     return max(hit, key=len) if hit else ""
 
@@ -162,7 +168,9 @@ def _timetable_query(question: str, table: str, now: datetime) -> dict | None:
     found, stops = [], set()
     for row in table.split("\n")[1:]:
         segs = [x.split(": ", 1) for x in row.split(" / ") if ": " in x]
-        label = ", ".join(v if k == "호차" else f"{v}회차" for k, v in segs if k in ("회차", "호차"))
+        # 영동 시간표는 회차를 '구분'으로 적고 호차가 등교·하교에 두 번 나온다 → '1회차, 1호차'로 한 번씩
+        label = ", ".join(dict.fromkeys((v if v.endswith("호차") else f"{v}호차") if k == "호차" else f"{v}회차"
+                                         for k, v in segs if k in ("회차", "구분", "호차")))
         for key, val in segs:
             stop = _stop_of(key, question)
             m = _HHMM.fullmatch(val.strip())
@@ -180,7 +188,9 @@ def _timetable_query(question: str, table: str, now: datetime) -> dict | None:
     found.sort()
     _, explicit_day = _day_type(question, now)
     compact = question.replace(" ", "")          # '가장빠른'처럼 붙여 써도 알아보게
-    if "첫차" in compact:
+    if "첫차" in compact and "막차" in compact:        # 되묻기 버튼 '첫차·막차'
+        mode = "first_last"
+    elif "첫차" in compact:
         mode = "first"
     elif "막차" in compact or "마지막" in compact:
         mode = "last"
@@ -200,24 +210,32 @@ def _table_name(header: str) -> str:
     return f"{name} {rest}".strip()
 
 
+def _lab(label: str) -> str:
+    """' (2회차, 2호차)'. 회차·호차가 없는 시간표면 괄호를 쓰지 않는다 (예전엔 '8:00 ()'로 나왔음)."""
+    return f" ({label})" if label else ""
+
+
 def _timetable_answer(q: dict, header: str) -> str:
     stop, d, now, found, up = "·".join(q["stops"]), q["direction"], q["now"], q["found"], q["upcoming"]
     if not found:
         text = f"{stop} {d} 시간이 이 시간표에 없습니다."
     elif q["mode"] == "next" and up:
         # 11/18 사용자 요청: '지금(03:13) 기준으로' 같은 현재 시각 표시는 빼고 답만 보여줌
-        text = f"{stop}에서 가장 빠른 {d} 버스는 {up[0][1]} ({up[0][2]})입니다."
+        text = f"{stop}에서 가장 빠른 {d} 버스는 {up[0][1]}{_lab(up[0][2])}입니다."
         if len(up) > 1:
-            text += f" 다음 차는 {up[1][1]} ({up[1][2]})입니다."
+            text += f" 다음 차는 {up[1][1]}{_lab(up[1][2])}입니다."
     elif q["mode"] == "next":
         text = (f"오늘({_WEEKDAYS[now.weekday()]}요일) {stop} {d} 버스는 모두 끝났습니다. "
-                f"이 시간표의 첫차는 {found[0][1]} ({found[0][2]})입니다.")
+                f"이 시간표의 첫차는 {found[0][1]}{_lab(found[0][2])}입니다.")
     elif q["mode"] == "first":
-        text = f"{stop}에서 {d} 첫차는 {found[0][1]} ({found[0][2]})입니다."
+        text = f"{stop}에서 {d} 첫차는 {found[0][1]}{_lab(found[0][2])}입니다."
         if len(found) > 1:
-            text += f" 그다음 차는 {found[1][1]} ({found[1][2]})입니다."
+            text += f" 그다음 차는 {found[1][1]}{_lab(found[1][2])}입니다."
     elif q["mode"] == "last":
-        text = f"{stop}에서 {d} 막차는 {found[-1][1]} ({found[-1][2]})입니다."
+        text = f"{stop}에서 {d} 막차는 {found[-1][1]}{_lab(found[-1][2])}입니다."
+    elif q["mode"] == "first_last":
+        text = (f"{stop}에서 {d} 첫차는 {found[0][1]}{_lab(found[0][2])}, "
+                f"막차는 {found[-1][1]}{_lab(found[-1][2])}입니다.")
     else:
         times = list(dict.fromkeys(f[1] for f in found))   # 같은 시간이 여러 호차로 나오면 한 번만
         more = f" 외 {len(times) - 20}회" if len(times) > 20 else ""
@@ -276,6 +294,27 @@ def _rerank(question: str, hits: list[dict], now: datetime) -> list[dict]:
     return sorted(hits, key=adjusted, reverse=True)
 
 
+def _with_club_summary(hits: list[dict]) -> list[dict]:
+    """동아리 하나하나의 조각이 걸리면, 분과별 동아리 목록(요약 조각)을 맨 앞에 붙인다.
+
+    11/19: '운동 동아리 뭐 있어?'에 동아리 조각 3개만 넘어가 족구동아리가 빠졌다. 목록 질문은 요약이 있어야 다 답한다.
+    """
+    if not any(h["meta"].get("title", "").startswith("동아리:") for h in hits[:3]):
+        return hits
+    if any(h["meta"].get("title") == "동아리현황" for h in hits[:3]):
+        return hits
+    with db.connect() as con:
+        row = con.execute("SELECT chunk_id, title, content, source_url, menu_path, collected_at, campus, category "
+                          "FROM chunk WHERE title = '동아리현황' LIMIT 1").fetchone()
+    if row is None:
+        return hits
+    summary = {"id": row["chunk_id"], "score": hits[0]["score"], "document": row["content"],
+               "meta": {"title": row["title"], "category": row["category"], "campus": row["campus"] or "공통",
+                        "source_url": row["source_url"], "menu_path": row["menu_path"] or "",
+                        "collected_at": row["collected_at"]}}
+    return [summary] + [h for h in hits if h["id"] != row["chunk_id"]]
+
+
 def _ranked_hits(qvec: list[float], where: dict | None, question: str = "") -> list[dict]:
     """공식 자료(공지·학사일정·통학버스·동아리·FAQ)를 먼저, 학생 Q&A는 최대 1개만 붙인다.
 
@@ -288,28 +327,210 @@ def _ranked_hits(qvec: list[float], where: dict | None, question: str = "") -> l
         return _rerank(question, hits, _now())[:config.TOP_K]
 
     official = search({"category": {"$ne": "Q&A"}})
+    official = _with_club_summary(official)
     qna = search({"category": "Q&A"})
     top = official[:config.CONTEXT_K - 1] + qna[:1]
     rest = official[config.CONTEXT_K - 1:] + qna[1:]
     return top + rest           # 앞에서부터 CONTEXT_K개가 sLLM에 넘어감
 
 
-def ask(question: str, category: str | None = None, campus: str | None = None) -> dict:
+_CONTEST_WORDS = ("공모전", "경진대회", "콘테스트", "공모")
+_CONTEST_TITLE = ("공모전", "경진대회", "콘테스트", "대회")     # 목록에 넣을 제목 ('기관 공모', '논문 공모'는 학생 공모전이 아님)
+_MONTH_DAY = re.compile(r"(?<!\d)(\d{1,2})월\s*(\d{1,2})일")
+_LIST_WORDS = ("요즘", "진행", "모집", "지금", "현재", "뭐있", "있어", "있나", "목록", "알려", "종류", "어떤")
+_CONTEST_STOP = set("공모전 경진대회 콘테스트 공모 요즘 하는 지금 현재 진행 진행중 중인 모집 모집중 뭐 뭐가 있어 있어? 있나 있나요 "
+                    "알려줘 알려줘봐 알려 주세요 목록 종류 어떤 거 것 좀 학교 우리 참여 참가 할 수 있는".split())
+
+
+def _contest_intent(question: str) -> bool:
+    """공모전 목록을 묻는가. '공모전'만 보낸 것(학과를 고른 뒤 다시 오는 질문 포함)도 목록으로 본다."""
+    compact = question.replace(" ", "")
+    if not any(w in compact for w in _CONTEST_WORDS):
+        return False
+    only = all(t in clarifier.FILLER or any(w in t for w in _CONTEST_WORDS) for t in clarifier._tokens(question))
+    return only or any(w in compact for w in _LIST_WORDS)
+
+
+def _contest_deadlines(campus: str | None, today: str) -> dict:
+    """학교 공지(학과 사이트 포함) 중 날짜가 아직 안 지난 공모전. {이름: (마지막 날짜, 행, 올린 곳 목록)}"""
+    cond = " OR ".join("title LIKE ?" for _ in _CONTEST_TITLE)
+    with db.connect() as con:
+        rows = con.execute(f"SELECT title, content, source_url, menu_path, collected_at, posted_at, campus FROM chunk "
+                           f"WHERE ({cond})", [f"%{w}%" for w in _CONTEST_TITLE]).fetchall()
+    found = {}
+    for r in rows:
+        if campus and r["campus"] not in (None, "", "공통", campus):
+            continue
+        name = r["title"].split(": ", 1)[-1].strip()          # '미래자동차학과: 제목' → '제목' (학과마다 같은 공지)
+        other = {"아산": "영동", "영동": "아산"}.get(campus or "")
+        if other and (f"({other})" in name or f"{other}캠" in name):   # 제목에 다른 캠퍼스가 적힌 공지는 뺀다
+            continue
+        text = r["title"] + " " + r["content"][:1500]
+        year = (r["posted_at"] or today)[:4]                    # '11월 30일(월)까지'처럼 연도가 없으면 게시 연도로 본다
+        dates = _dates(text) + [f"{year}-{int(m):02d}-{int(d):02d}" for m, d in _MONTH_DAY.findall(text)
+                                if 1 <= int(m) <= 12 and 1 <= int(d) <= 31]
+        deadline = max(dates, default=None)
+        if not deadline or deadline < today:
+            continue
+        site = r["title"].split(": ", 1)[0] if ": " in r["title"] else "학교"
+        if name in found:
+            found[name][2].append(site)
+        else:
+            found[name] = (deadline, r, [site])
+    return found
+
+
+def _contest_list(question: str, campus: str | None, now: datetime, dept: str | None) -> tuple[str, list[dict]] | None:
+    """공모전 목록 질문에 학과에 맞는 것부터 답한다. 학교 공지 + 충청남도 공모전 API + 네이버 뉴스 (external.py).
+
+    11/19: 이런 질문은 특정 공지와 문장이 닮지 않아 검색 점수가 낮고 근거없음이 됐다 → 코드로 모은다.
+    11/20: 학과마다 관련 공모전이 달라서 학과를 받아(되묻기, clarifier.py) 순서를 정한다.
+    - 학과 추천: 그 학과 사이트에 올라온 공모전, 제목·본문 앞부분에 학과 키워드(departments.py)가 든 공모전
+    - 누구나 참가할 수 있는 다른 공모전: 나머지
+    질문에 주제어가 있으면(예: '동아리 공모전') 그 말이 든 것만 고르고, 없으면 그렇다고 말한 뒤 전체를 보여준다.
+    """
+    today = now.strftime("%Y-%m-%d")
+    found = _contest_deadlines(campus, today)
+    dept = None if dept == departments.ALL else dept
+    kw = departments.keywords(dept)
+    words = [w for w in re.findall(r"[가-힣A-Za-z0-9]+", question)
+             if w not in _CONTEST_STOP and len(w) >= 2 and not (dept and (w in dept or dept in w))]
+    picked = {k: v for k, v in found.items() if any(w in k for w in words)} if words else found
+    # 질문 문장은 보내지 않고 주제어(없으면 학과 키워드 두 개)만 외부 검색에 보낸다
+    news = external.contest_news(words or list(kw[:2]), now)
+    region = external.chungnam_contests(now)
+    if words:
+        region = [c for c in region if any(w in c["title"] for w in words)]
+    if not found and not news and not region:
+        return None
+
+    def fits(name: str, row=None, sites=()) -> bool:
+        # 제목에서만 보고, '[홍보]' 같은 말머리는 뺀다. 본문까지 보면 '대외홍보팀' 같은 부서 이름에 걸렸다
+        head = re.sub(r"\[[^\]]*\]", " ", name).lower()
+        return bool(dept) and (dept in sites or any(k.lower() in head for k in kw))
+
+    parts, sources = [], []
+    if words and not picked:
+        parts.append(f"'{' '.join(words)}' 관련 공모전은 학교 공지에 없습니다.")
+        picked = found
+    school = sorted(picked.items(), key=lambda kv: kv[1][0])
+    mine = [(n, v) for n, v in school if fits(n, v[1], v[2])]
+    rest = [(n, v) for n, v in school if not fits(n, v[1], v[2])]
+    region_mine = [c for c in region if fits(c["title"])]
+    region_rest = [c for c in region if not fits(c["title"])]
+
+    def school_line(n, v):
+        # 공지 안의 마지막 날짜가 접수 마감이 아니라 발표일일 수 있어서 '마감'이라고 하지 않는다
+        return f"· {n} (일정 ~{v[0][5:7]}.{v[0][8:10]})"
+
+    def region_line(c):
+        return (f"· {c['title']} (충청남도, 접수 {c['start'][5:7]}.{c['start'][8:10]}~"
+                f"{c['deadline'][5:7]}.{c['deadline'][8:10]})")
+
+    if dept:
+        lines = [school_line(n, v) for n, v in mine[:5]] + [region_line(c) for c in region_mine]
+        parts.append(f"{dept} 추천 공모전입니다.\n" + "\n".join(lines) if lines
+                     else f"{dept}에 딱 맞는 공모전은 지금 학교 공지와 충청남도 목록에 없습니다.")
+        others = [school_line(n, v) for n, v in rest[:4]] + [region_line(c) for c in region_rest[:2]]
+        if others:
+            parts.append("누구나 참가할 수 있는 다른 공모전입니다.\n" + "\n".join(others))
+    else:
+        lines = [school_line(n, v) for n, v in school[:6]] + [region_line(c) for c in region]
+        if lines:
+            parts.append("지금 모집 중인 공모전입니다.\n" + "\n".join(lines))
+    sources += [{"title": v[1]["title"], "kind": "공지", "source_url": v[1]["source_url"], "menu_path": v[1]["menu_path"],
+                 "collected_at": v[1]["collected_at"], "label": v[1]["title"]} for _, v in (mine + rest)[:2]]
+    if region:
+        sources.append({"title": "충청남도 공모전 일정", "kind": "외부 API", "source_url": region[0]["url"],
+                        "menu_path": None, "collected_at": None, "label": "출처: 충청남도 (공공누리)"})
+    if news:
+        parts.append("외부 공모전 소식 (네이버 뉴스)입니다.\n" +
+                     "\n".join(f"· {n['title']} ({n['date']} 기사)" for n in news))
+        sources += [{"title": n["title"], "kind": "외부 검색", "source_url": n["url"], "menu_path": None,
+                     "collected_at": None, "label": f"네이버 뉴스 · {n['title'][:30]}"} for n in news[:2]]
+    parts.append("자세한 접수 기간과 조건은 출처에서 확인해 주세요.")
+    return "\n\n".join(parts), sources
+
+
+# 학생들이 쓰는 줄임말을 풀어서 검색·FAQ·규칙이 알아보게 한다 (11/20: '통버 무료임?'이 통학버스 FAQ에 안 걸림)
+_ABBR = [(re.compile(r"통버"), "통학버스"), (re.compile(r"아캠"), "아산캠퍼스"), (re.compile(r"영캠"), "영동캠퍼스"),
+         (re.compile(r"셔틀(?!버스)"), "셔틀버스"), (re.compile(r"계절(?!학기)"), "계절학기")]
+# 서로 다른 대상: 질문에 한쪽이 있는데 FAQ 질문에 그 말이 없으면 FAQ를 쓰지 않는다
+# (11/20: '시내버스 요금 얼마야?'가 '통학버스 요금은 얼마인가요?' FAQ에 0.82로 걸려 '무료'라고 답할 뻔함)
+_DISTINCT = [("시내버스", "통학버스", "셔틀버스", "고속버스"), ("국가장학금", "교내장학금"), ("아산", "영동")]
+
+
+def _normalize(question: str) -> str:
+    for pat, full in _ABBR:
+        question = pat.sub(full, question)
+    return question
+
+
+# 무엇을 묻는가. 질문과 FAQ가 서로 다른 것을 물으면 FAQ를 쓰지 않는다
+# (11/20: '통학버스 시간표'가 '통학버스 요금은 얼마인가요?' FAQ에 걸려 '무료입니다'로 답함)
+_ASPECTS = {
+    "요금": ("요금", "무료", "돈", "비용", "얼마", "유료", "가격", "금액", "수수료"),
+    "시간": ("시간표", "시간", "몇 시", "몇시", "첫차", "막차", "배차", "운행", "다녀", "다니"),
+    "날짜": ("언제", "기간", "날짜", "며칠", "마감", "일정"),
+    "장소": ("어디", "장소", "위치", "몇 층", "어느 건물"),
+    "연락처": ("전화", "연락처", "번호", "이메일", "문의처"),
+    "방법": ("방법", "어떻게", "절차", "서류", "신청서"),
+    "자격": ("자격", "대상", "조건", "기준"),
+}
+
+
+def _aspects(text: str) -> set[str]:
+    return {name for name, words in _ASPECTS.items() if any(w in text for w in words)}
+
+
+def _faq_conflicts(question: str, faq_question: str) -> bool:
+    for group in _DISTINCT:
+        asked = {w for w in group if w in question}
+        if asked and not asked & {w for w in group if w in faq_question} and any(w in faq_question for w in group):
+            return True
+    q_asp, f_asp = _aspects(question), _aspects(faq_question)
+    return bool(q_asp and f_asp and not q_asp & f_asp)
+
+
+def ask(question: str, category: str | None = None, campus: str | None = None,
+        department: str | None = None) -> dict:
     t0 = time.perf_counter()
-    question = question.strip()
+    question = _normalize(question.strip())
     qvec = index.embed([question])[0]
     result = {"answer_type": "근거없음", "answer": NOT_FOUND_ANSWER, "sources": [], "schedule": None,
               "clarify": None, "pending_registered": False}
+    answered_by, contexts = None, []          # 기록용: 누가 답했나(llm·timetable), sLLM에 넘긴 근거
 
-    with db.connect() as con:
-        faq, score = _nearest(con, "SELECT * FROM faq", qvec)
-        if faq is not None and score >= config.FAQ_SCORE:
-            con.execute("UPDATE faq SET ask_count = ask_count + 1 WHERE faq_id = ?", (faq["faq_id"],))
-            result.update(answer_type="FAQ", answer=faq["answer"], sources=[{
-                "title": faq["question"], "kind": "학과 조교 답변", "source_url": None, "menu_path": None,
-                "collected_at": faq["created_at"], "label": f"학과 조교 답변 · {faq['created_at'][:10]}"}])
+    # 되묻기를 FAQ보다 먼저 본다 (11/20: '통학버스' 한 단어에 요금 FAQ '무료입니다'로 답했음)
+    clarify = clarifier.check(question, campus, department)      # 애매한 질문은 먼저 되묻는다 (FR-027)
+    if clarify:
+        result.update(answer_type="되묻기", answer=clarify["question"], clarify=clarify)
+    else:
+        with db.connect() as con:
+            faq, score = _nearest(con, "SELECT * FROM faq", qvec)
+            if faq is not None and score >= config.FAQ_SCORE and not _faq_conflicts(question, faq["question"]):
+                con.execute("UPDATE faq SET ask_count = ask_count + 1 WHERE faq_id = ?", (faq["faq_id"],))
+                result.update(answer_type="FAQ", answer=faq["answer"], sources=[{
+                    "title": faq["question"], "kind": "학과 조교 답변", "source_url": None, "menu_path": None,
+                    "collected_at": faq["created_at"], "label": f"학과 조교 답변 · {faq['created_at'][:10]}"}])
 
-    if result["answer_type"] != "FAQ":
+    # 학식 메뉴는 오늘·내일·요일을 코드가 계산해 고른다 (11/20: 금요일에 화요일 메뉴를 답했음)
+    if result["answer_type"] == "근거없음" and cafeteria.is_menu_question(question):
+        menu = cafeteria.answer(question, campus, _now())
+        if menu:
+            answered_by = "cafeteria"
+            # 그날 식단이 없으면(주말·아직 안 올라옴) 근거없음으로 알리되, 조교 답변 대기에는 올리지 않는다
+            result.update(answer_type="문서" if menu[1] else "근거없음", answer=menu[0], sources=[{
+                "title": "학교 구내식당", "kind": "학교 홈페이지", "source_url": "https://www.u1.ac.kr/u1/life/cafeteria.do",
+                "menu_path": "홈 > 대학생활 > 학교 구내식당", "collected_at": None, "label": "유원대: 학교 구내식당"}])
+
+    if result["answer_type"] == "근거없음" and _contest_intent(question):
+        dept = departments.find_in(question) or department          # 질문에 적힌 학과가 우선
+        contest = _contest_list(question, campus, _now(), dept)
+        if contest:
+            result.update(answer_type="문서", answer=contest[0], sources=contest[1])
+
+    if result["answer_type"] == "근거없음" and answered_by is None:
         where = _campus_filter(campus)
         if category:
             cond = {"category": category}
@@ -335,8 +556,10 @@ def ask(question: str, category: str | None = None, campus: str | None = None) -
                 tq = _timetable_query(question, contexts[0], now)
             if tq:
                 text = _timetable_answer(tq, contexts[0].split("\n", 1)[0])
+                answered_by = "timetable"
             elif config.USE_LLM:
                 text = llm.answer(question, contexts, _now_text(now))
+                answered_by = "llm"
             else:
                 text = contexts[0][:400]
             if text and not llm.is_not_found(text):
@@ -346,10 +569,15 @@ def ask(question: str, category: str | None = None, campus: str | None = None) -
             result["pending_registered"] = True
 
     result["elapsed_ms"] = int((time.perf_counter() - t0) * 1000)
+    # 답변 피드백(관리 웹 '답변 고치기')과 파인튜닝 데이터에 쓰려고, sLLM이 본 근거와 답을 함께 남긴다.
+    # 근거는 학교 공지 원문이고, 질문·답은 전화번호·학번 형태를 가린다.
+    log_ctx = json.dumps({"by": answered_by, "contexts": contexts if answered_by == "llm" else []}, ensure_ascii=False)
     with db.connect() as con:
-        con.execute("INSERT INTO query_log (question, category, campus, answer_type, response_ms, created_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?)",
-                    (db.mask(question)[:200], category, campus, result["answer_type"], result["elapsed_ms"], db.now()))
+        cur = con.execute("INSERT INTO query_log (question, category, campus, answer_type, response_ms, created_at, "
+                          "answer, contexts) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                          (db.mask(question)[:200], category, campus, result["answer_type"], result["elapsed_ms"],
+                           db.now(), db.mask(result["answer"])[:2000], log_ctx))
+        result["log_id"] = cur.lastrowid
     return result
 
 
