@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 
 import numpy as np
 
-from . import cafeteria, clarifier, config, db, departments, external, index, llm
+from . import cafeteria, clarifier, config, db, departments, external, index, llm, readable
 
 SOURCE_GAP = 0.04          # 출처로 보여 줄 근거의 점수 차이 한도
 
@@ -79,7 +79,28 @@ def _day_type(question: str, now: datetime) -> tuple[str, bool]:
         return "주말", True
     if any(w in question for w in ("평일", "월요일", "화요일", "수요일", "목요일", "금요일", "학기 중")):
         return "평일", True
-    return ("주말" if now.weekday() >= 5 else "평일"), False   # 방학 기간은 아직 모르므로 학기 중으로 본다
+    # 11/21 사용자 요청: 학사일정의 방학 기간(예: '2026학년도 동계방학: 2026.12.16 ~ 2027.02.28')이면 방학 표,
+    # 아니면 학기 중(월~금) 표. 토요일에 '(주말·공휴일·방학)' 페이지 표로 답해 방학 시간표처럼 보였다.
+    # 학기 중 주말이면 주말/공휴일 표 (같은 사용자 지적: 주말 시간표가 따로 있는데 평일 표를 보여 주면 안 됨)
+    if _in_vacation(now):
+        return "방학", False
+    return ("주말" if now.weekday() >= 5 else "평일"), False
+
+
+_VACATION = re.compile(r"방학:\s*(\d{4})\.(\d{2})\.(\d{2})\s*~\s*(\d{4})\.(\d{2})\.(\d{2})")
+
+
+def _in_vacation(now: datetime) -> bool:
+    """수집한 학사일정의 '하계방학'·'동계방학' 기간 안인가. 학사일정이 없으면 학기 중으로 본다."""
+    today = now.strftime("%Y-%m-%d")
+    with db.connect() as con:
+        rows = con.execute("SELECT content FROM chunk WHERE source_url LIKE '%academic-calendar%' "
+                           "AND content LIKE '%방학:%'").fetchall()
+    for r in rows:
+        for m in _VACATION.finditer(r["content"]):
+            if f"{m[1]}-{m[2]}-{m[3]}" <= today <= f"{m[4]}-{m[5]}-{m[6]}":
+                return True
+    return False
 
 
 def _bus_table(hits: list[dict], question: str, now: datetime) -> tuple[list[str], list[dict]] | None:
@@ -107,6 +128,14 @@ def _bus_table(hits: list[dict], question: str, now: datetime) -> tuple[list[str
     with db.connect() as con:
         rows = con.execute("SELECT content FROM chunk WHERE source_url = ? ORDER BY rowid",
                            (best["meta"].get("source_url"),)).fetchall()
+    # 검색에 걸린 표가 오늘에 맞지 않으면, 같은 페이지의 다른 표 중 맞는 표로 바꾼다
+    # (11/21 토요일: 검색에 '방학중' 표만 걸려 주말인데 방학 시간표로 답했음)
+    if not rank(best)[1]:
+        for r in rows:
+            h = r["content"].split("\n", 1)[0]
+            if ("방학" in h.split("] ", 1)[-1]) == (day == "방학"):
+                header = h
+                break
     lines = [ln for r in rows if r["content"].split("\n", 1)[0] == header for ln in r["content"].split("\n")[1:]]
     if not lines:
         return None
@@ -207,6 +236,8 @@ def _table_name(header: str) -> str:
     """'[아산캠퍼스 통학버스 (학기 중)] 1,2호차 학기 중(월~금) 운행노선표 (45인승) (천안시내 …)' → 앞의 두 부분만"""
     name, _, rest = header.strip("[").partition("] ")
     rest = re.sub(r"\s*\([^)]*(운행|도착시간)[^)]*\)\s*$", "", rest)
+    # 페이지 이름 '(주말·공휴일·방학)' 때문에 주말 표도 방학 표처럼 보였다 (11/21) → 표 이름에 맞는 말만 남긴다
+    name = re.sub(r"\s*\(주말·공휴일·방학\)", "", name)
     return f"{name} {rest}".strip()
 
 
@@ -219,28 +250,33 @@ def _timetable_answer(q: dict, header: str) -> str:
     stop, d, now, found, up = "·".join(q["stops"]), q["direction"], q["now"], q["found"], q["upcoming"]
     if not found:
         text = f"{stop} {d} 시간이 이 시간표에 없습니다."
+    # 11/21 사용자 요청: 한 줄에 다 붙어 있어 읽기 어려움 → 첫 줄에 답, 나머지는 한 줄에 하나씩
     elif q["mode"] == "next" and up:
         # 11/18 사용자 요청: '지금(03:13) 기준으로' 같은 현재 시각 표시는 빼고 답만 보여줌
         text = f"{stop}에서 가장 빠른 {d} 버스는 {up[0][1]}{_lab(up[0][2])}입니다."
         if len(up) > 1:
-            text += f" 다음 차는 {up[1][1]}{_lab(up[1][2])}입니다."
+            text += f"\n· 다음 차: {up[1][1]}{_lab(up[1][2])}"
     elif q["mode"] == "next":
-        text = (f"오늘({_WEEKDAYS[now.weekday()]}요일) {stop} {d} 버스는 모두 끝났습니다. "
-                f"이 시간표의 첫차는 {found[0][1]}{_lab(found[0][2])}입니다.")
+        text = (f"오늘({_WEEKDAYS[now.weekday()]}요일) {stop} {d} 버스는 모두 끝났습니다."
+                f"\n· 이 시간표의 첫차: {found[0][1]}{_lab(found[0][2])}")
     elif q["mode"] == "first":
         text = f"{stop}에서 {d} 첫차는 {found[0][1]}{_lab(found[0][2])}입니다."
         if len(found) > 1:
-            text += f" 그다음 차는 {found[1][1]}{_lab(found[1][2])}입니다."
+            text += f"\n· 그다음 차: {found[1][1]}{_lab(found[1][2])}"
     elif q["mode"] == "last":
         text = f"{stop}에서 {d} 막차는 {found[-1][1]}{_lab(found[-1][2])}입니다."
     elif q["mode"] == "first_last":
-        text = (f"{stop}에서 {d} 첫차는 {found[0][1]}{_lab(found[0][2])}, "
-                f"막차는 {found[-1][1]}{_lab(found[-1][2])}입니다.")
+        text = (f"{stop} {d} 첫차·막차입니다.\n· 첫차: {found[0][1]}{_lab(found[0][2])}"
+                f"\n· 막차: {found[-1][1]}{_lab(found[-1][2])}")
     else:
         times = list(dict.fromkeys(f[1] for f in found))   # 같은 시간이 여러 호차로 나오면 한 번만
-        more = f" 외 {len(times) - 20}회" if len(times) > 20 else ""
-        text = f"{stop} {d} 버스 시간은 {', '.join(times[:20])}{more}입니다."
-    return text + f"\n\n기준 시간표: {_table_name(header)}. 도착 시간은 교통 상황에 따라 달라질 수 있습니다."
+        groups = {"오전": [], "오후": [], "저녁": []}
+        for t in times:
+            h = int(t.split(":")[0])
+            groups["오전" if h < 12 else "오후" if h < 18 else "저녁"].append(t)
+        text = f"{stop} {d} 버스 시간입니다." + "".join(
+            f"\n· {k}: {', '.join(v)}" for k, v in groups.items() if v)
+    return text + f"\n\n기준: {_table_name(header)}\n도착 시간은 교통 상황에 따라 달라질 수 있습니다."
 
 
 def register_pending(question: str, category: str | None, campus: str | None, qvec: list[float]) -> int:
@@ -334,7 +370,7 @@ def _ranked_hits(qvec: list[float], where: dict | None, question: str = "") -> l
     return top + rest           # 앞에서부터 CONTEXT_K개가 sLLM에 넘어감
 
 
-_CONTEST_WORDS = ("공모전", "경진대회", "콘테스트", "공모")
+_CONTEST_WORDS = ("공모전", "경진대회", "콘테스트", "공모", "해커톤")
 _CONTEST_TITLE = ("공모전", "경진대회", "콘테스트", "대회")     # 목록에 넣을 제목 ('기관 공모', '논문 공모'는 학생 공모전이 아님)
 _MONTH_DAY = re.compile(r"(?<!\d)(\d{1,2})월\s*(\d{1,2})일")
 _LIST_WORDS = ("요즘", "진행", "모집", "지금", "현재", "뭐있", "있어", "있나", "목록", "알려", "종류", "어떤", "마감", "임박", "빠른", "언제")
@@ -434,7 +470,7 @@ def _contest_list(question: str, campus: str | None, now: datetime, dept: str | 
     """
     today = now.strftime("%Y-%m-%d")
     found = _contest_deadlines(campus, today)
-    dept = None if dept == departments.ALL else dept
+    dept = None if dept in (departments.ALL, departments.MORE) else dept
     kw = departments.keywords(dept)
     # 11/21: '가장 빠른 공모전 날짜좀'의 '가장 빠른 날짜좀'을 주제어로 잘못 보고 '관련 공모전이 없다'고 답했다.
     # 순서·날짜를 묻는 말과 끝에 붙은 '좀'은 주제어에서 뺀다
@@ -446,15 +482,22 @@ def _contest_list(question: str, campus: str | None, now: datetime, dept: str | 
     # 질문 문장은 보내지 않고 주제어(없으면 학과 키워드 두 개)만 외부 검색에 보낸다
     news = external.contest_news(words or list(kw[:2]), now)
     region = external.chungnam_contests(now)
+    sites = external.site_contests(now)          # 위비티·콘테스트코리아 IT·SW·과학 공모전 (11/21)
     if words:
         region = [c for c in region if any(w in c["title"] for w in words)]
-    if not found and not news and not region:
+        # 영어 제목도 찾게 한다 ('INNO-CODER AI HACKATHON')
+        alias = {"해커톤": "hackathon", "인공지능": "ai", "로봇": "robot", "게임": "game"}
+        sites = [c for c in sites if any(w.lower() in c["title"].lower() or alias.get(w, "\0") in c["title"].lower()
+                                         for w in words)]
+    if not found and not news and not region and not sites:
         return None
 
     def fits(name: str, row=None, sites=()) -> bool:
         # 제목에서만 보고, '[홍보]' 같은 말머리는 뺀다. 본문까지 보면 '대외홍보팀' 같은 부서 이름에 걸렸다
-        head = re.sub(r"\[[^\]]*\]", " ", name).lower()
-        return bool(dept) and (dept in sites or any(k.lower() in head for k in kw))
+        head = re.sub(r"\[[^\]]*\]", " ", name)
+        # 'IT'·'SW'처럼 짧은 영어 키워드는 대소문자를 그대로 본다 ('Digital'의 'it'에 걸리지 않게)
+        return bool(dept) and (dept in sites or any(
+            (k in head) if (k.isascii() and len(k) <= 3) else (k.lower() in head.lower()) for k in kw))
 
     parts, sources = [], []
     if words and not picked:
@@ -466,6 +509,29 @@ def _contest_list(question: str, campus: str | None, now: datetime, dept: str | 
     region_mine = [c for c in region if fits(c["title"])]
     region_rest = [c for c in region if not fits(c["title"])]
 
+    # 위비티·콘테스트코리아 공모전 (11/21). 학과를 골랐으면 학과 키워드가 제목이나 위비티 분야
+    # (주최 측이 공모전마다 고른 '웹/모바일/IT' 등)에 든 것만. 콘테스트코리아 분야는 '요리/뷰티/배우/오디션'처럼
+    # 여러 분야를 묶은 큰 갈래라서 쓰지 않는다 (호텔조리에 아이돌 오디션이 걸렸음).
+    # 제목과 분야 둘 다 맞는 것 → 제목만 → 분야만 순서, 그 안에서 마감 빠른 순 ('AI 영상 공모전'보다 'AI 해커톤'이 먼저)
+    if dept:
+        def score(c):
+            field = c.get("field", "") if c["site"] == "위비티" else ""
+            return fits(c["title"]) * 2 + (bool(field) and fits(field))
+        pick = sorted((c for c in sites if score(c)), key=lambda c: (-score(c), c["deadline"]))
+    else:
+        pick = sites
+
+    def site_line(c):
+        # 주최가 여러 곳이면 첫 곳만, 길면 줄인다 ('(재)운당나눔재단, (재)울산창조경제혁신센터' → '(재)운당나눔재단 외')
+        host = re.split(r"\s*[,·×]\s*", c["host"])[0] if c["host"] else ""
+        host = (host[:14] + "…" if len(host) > 15 else host) + (" 외" if host != c["host"].strip() and host else "")
+        return f"· {c['title']} (~{c['deadline'][5:7]}.{c['deadline'][8:10]}{', ' + host if host else ''})"
+    ext = ""
+    if pick:
+        ext = (f"{dept + '에 맞는 외부 공모전' if dept else '외부 공모전'}입니다 (위비티·콘테스트코리아).\n"
+               + "\n".join(site_line(c) for c in pick[:20])
+               + (f"\n외 {len(pick) - 20}건은 출처의 공모전 목록에서 볼 수 있습니다." if len(pick) > 20 else ""))
+
     def school_line(n, v):
         # 접수 줄에서 찾은 날짜면 '접수 ~', 아니면(발표일일 수도 있음) '일정 ~'
         return f"· {n} ({'접수' if v[3] else '일정'} ~{v[0][5:7]}.{v[0][8:10]})"
@@ -475,14 +541,19 @@ def _contest_list(question: str, campus: str | None, now: datetime, dept: str | 
                 f"{c['deadline'][5:7]}.{c['deadline'][8:10]})")
 
     if soonest:                             # '가장 빠른·마감 임박' → 날짜가 가장 가까운 것 하나를 먼저 말한다
-        cands = [(v[0], n) for n, v in school] + [(c["deadline"], c["title"]) for c in region]
+        cands = ([(v[0], n) for n, v in school] + [(c["deadline"], c["title"]) for c in region]
+                 + [(c["deadline"], c["title"]) for c in sites if not dept or fits(c["title"])])
         if cands:
             d, n = min(cands)
             parts.append(f"마감이 가장 가까운 공모전은 '{n}'입니다 (~{d[5:7]}.{d[8:10]}).")
     if dept:
         lines = [school_line(n, v) for n, v in mine[:5]] + [region_line(c) for c in region_mine]
-        parts.append(f"{dept} 추천 공모전입니다.\n" + "\n".join(lines) if lines
-                     else f"{dept}에 딱 맞는 공모전은 지금 학교 공지와 충청남도 목록에 없습니다.")
+        if lines:
+            parts.append(f"{dept} 추천 공모전입니다.\n" + "\n".join(lines))
+        elif not pick:
+            parts.append(f"{dept}에 딱 맞는 공모전은 지금 학교 공지와 외부 공모전 목록에 없습니다.")
+        if ext:                             # 학과에 맞는 외부 공모전은 학교 추천 바로 다음에
+            parts.append(ext)
         others = [school_line(n, v) for n, v in rest[:4]] + [region_line(c) for c in region_rest[:2]]
         if others:
             parts.append("누구나 참가할 수 있는 다른 공모전입니다.\n" + "\n".join(others))
@@ -490,11 +561,20 @@ def _contest_list(question: str, campus: str | None, now: datetime, dept: str | 
         lines = [school_line(n, v) for n, v in school[:6]] + [region_line(c) for c in region]
         if lines:
             parts.append("지금 모집 중인 공모전입니다.\n" + "\n".join(lines))
+        if ext:
+            parts.append(ext)
     sources += [{"title": v[1]["title"], "kind": "공지", "source_url": v[1]["source_url"], "menu_path": v[1]["menu_path"],
                  "collected_at": v[1]["collected_at"], "label": v[1]["title"]} for _, v in (mine + rest)[:2]]
     if region:
         sources.append({"title": "충청남도 공모전 일정", "kind": "외부 API", "source_url": region[0]["url"],
                         "menu_path": None, "collected_at": None, "label": "출처: 충청남도 (공공누리)"})
+    if pick:
+        sources += [{"title": "위비티 공모전", "kind": "외부 사이트",
+                     "source_url": "https://www.wevity.com/?c=find&s=1&gub=1", "menu_path": None,
+                     "collected_at": None, "label": "위비티 공모전 목록"},
+                    {"title": "콘테스트코리아 공모전", "kind": "외부 사이트",
+                     "source_url": "https://www.contestkorea.com/sub/list.php?int_gbn=1",
+                     "menu_path": None, "collected_at": None, "label": "콘테스트코리아 공모전 목록"}]
     if news:
         parts.append("외부 공모전 소식 (네이버 뉴스)입니다.\n" +
                      "\n".join(f"· {n['title']} ({n['date']} 기사)" for n in news))
@@ -621,6 +701,7 @@ def ask(question: str, category: str | None = None, campus: str | None = None,
             register_pending(question, category, campus, qvec)
             result["pending_registered"] = True
 
+    result["answer"] = readable.tidy(result["answer"])     # 모든 답: 목록 기호 통일, 긴 문단 줄 나눔 (11/21)
     result["elapsed_ms"] = int((time.perf_counter() - t0) * 1000)
     # 답변 피드백(관리 웹 '답변 고치기')과 파인튜닝 데이터에 쓰려고, sLLM이 본 근거와 답을 함께 남긴다.
     # 근거는 학교 공지 원문이고, 질문·답은 전화번호·학번 형태를 가린다.

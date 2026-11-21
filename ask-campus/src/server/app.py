@@ -21,7 +21,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
-from . import config, db, index, llm, rag
+from . import config, db, external, index, llm, rag
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 COOKIE = "askcampus_admin"
@@ -38,6 +38,10 @@ async def lifespan(_app: FastAPI):
     if config.USE_LLM:
         llm.warm_up()                      # sLLM 미리 올림 (첫 질문 지연 방지)
     REINDEX_TOKEN_FILE.write_text(secrets.token_hex(24), encoding="utf-8")
+    # 외부 공모전 목록을 미리 읽어 둔다 (첫 공모전 질문이 사이트 9쪽을 기다리지 않게). 실패해도 서버는 뜬다
+    import threading
+    from datetime import datetime
+    threading.Thread(target=lambda: external.site_contests(datetime.now(db.KST)), daemon=True).start()
     yield
 
 

@@ -122,3 +122,121 @@ def contest_news(topic_words: list[str], now: datetime, limit: int = 5) -> list[
         if len(out) >= limit:
             break
     return out
+
+
+# ── 공모전 모음 사이트 (11/21 사용자 요청: 'AI소프트웨어학과인데 해커톤 등 외부 공모전 전부 보는 방법') ──
+# 이용약관을 읽고 자동 수집을 막는 조항이 없는 곳만 쓴다 (11/21 확인). 두 곳 모두 '상업적 이용'만 금지하므로
+# 비상업 캡스톤에서 제목·주최·마감일·원문 링크만 보여 주고 본문은 가져오지 않는다. 6시간에 한 번만 읽는다.
+# - 위비티 (wevity.com/?c=intro&s=4), 콘테스트코리아 (contestkorea.com/terms/service.php)
+#   학과마다 맞는 공모전이 다르므로(간호·조리·영상 등) 공모전 분야 전체를 읽고, 학과 고르기는 rag.py가 한다.
+#   이벤트·경품(위비티 gub=2)과 대외활동·봉사활동은 공모전이 아니라서 뺀다.
+# 뺀 곳: 링커리어·요즘것들·씽굿·MLH (약관이 자동 수집이나 무단 복제를 금지), 데이콘·Devpost·캠퍼스픽·올콘·대티즌
+# (약관을 확인하지 못함. 데이콘은 봇 확인 페이지(HTTP 202)를 돌려줘 우회하지 않음). Kaggle·K-Startup은 키가 필요한 공식 API라 키를 받으면 붙인다.
+import threading
+from concurrent.futures import ThreadPoolExecutor
+
+_UA = {"User-Agent": "AskCampusBot/0.1 (U1 University capstone)"}
+WEVITY = "https://www.wevity.com/"
+_WEVITY_CATS = (1, 2, 3, 10, 19, 20, 21, 22, 23, 24, 25, 26, 28, 29, 88)
+CONTESTKOREA = "https://www.contestkorea.com/sub/"
+_CK_CATS = ("030110001", "030210001", "030310001", "030610001", "030810001", "030910001",
+            "031210001", "031410001", "031610001", "031810001")
+_SITE_KEY = "contest_sites"
+
+
+def _get(url: str) -> str:
+    req = urllib.request.Request(url, headers=_UA)
+    with urllib.request.urlopen(req, timeout=6) as r:
+        return r.read().decode("utf-8", "replace")
+
+
+def _wevity(job: tuple[int, int], today: datetime) -> list[dict]:
+    cidx, gp = job
+    page = _get(f"{WEVITY}?c=find&s=1&gub=1&cidx={cidx}&gp={gp}")
+    out = []
+    for li in re.findall(r"<li[^>]*>\s*<!--class=\"bg\" -->(.*?)</li>", page, re.S):
+        a = re.search(r'<a href="(\?[^"]+)">(.*?)</a>', li, re.S)
+        day = re.search(r'<div class="day">\s*(D-(\d+)|D-day)?.*?class="dday (\w+)"', li, re.S)
+        if not a or not day or day[3] not in ("ing", "soon"):
+            continue
+        days = int(day[2]) if day[2] else 0
+        organ = re.search(r'<div class="organ">(.*?)</div>', li, re.S)
+        field = re.search(r'<div class="sub-tit">분야\s*:\s*(.*?)</div>', li, re.S)
+        out.append({"title": _clean(re.sub(r"<span.*?</span>", "", a[2], flags=re.S)),
+                    "host": _clean(organ[1]) if organ else "",
+                    "deadline": (today + timedelta(days=days)).strftime("%Y-%m-%d"),
+                    "url": WEVITY + a[1].replace("&amp;", "&"), "site": "위비티",
+                    "field": _clean(field[1]) if field else ""})
+    return out
+
+
+def _contestkorea(job: tuple[str, int], today: datetime) -> list[dict]:
+    code, pg = job
+    page = _get(f"{CONTESTKOREA}list.php?displayrow=12&int_gbn=1&Txt_bcode={code}&page={pg}")
+    block = page.split('class="list_style_2"', 1)[-1].split('class="pagination"', 1)[0]
+    out = []
+    for li in block.split('<div class="title">')[1:]:            # 첫 항목만 class가 붙어 있어 제목 칸으로 나눈다
+        a = re.search(r'<a href="(view\.php[^"]+)">.*?<span class="txt">(.*?)</span>', li, re.S)
+        cond = re.search(r'class="condition">([^<]*)', li)
+        rng = re.search(r"<em>접수</em>\s*(\d{2})\.(\d{2})~(\d{2})\.(\d{2})", li)
+        if not a or not rng or not cond or cond[1].strip() not in ("접수중", "마감임박"):
+            continue
+        host = re.search(r"<strong>주최</strong>\s*\.\s*([^<]*)", li)
+        field = re.search(r'<span class="category">([^<]*)', li)
+        end = today.replace(month=int(rng[3]), day=int(rng[4]))
+        if end.strftime("%m%d") < today.strftime("%m%d"):
+            end = end.replace(year=today.year + 1)            # 12월에 '01.15' 마감 → 다음 해
+        out.append({"title": _clean(a[2]), "host": _clean(host[1]) if host else "",
+                    "deadline": end.strftime("%Y-%m-%d"), "url": CONTESTKOREA + a[1].replace("&amp;", "&"),
+                    "site": "콘테스트코리아", "field": _clean(field[1]).replace("•", "/") if field else ""})
+    return out
+
+
+def site_contests(now: datetime) -> list[dict]:
+    """두 사이트에서 접수 중인 공모전 (모든 분야). [{title, host, deadline, url, site}] 마감 빠른 순, 같은 공모전은 한 번."""
+    hit = _cache.get(_SITE_KEY)
+    if hit:
+        items = hit[1]
+        # 6시간이 지났으면 지금 질문은 가진 목록으로 답하고, 새로 읽기는 뒤에서 한다 (다 읽는 데 15초쯤 걸림)
+        if time.time() - hit[0] >= CACHE_SEC and not _refreshing.locked():
+            threading.Thread(target=_refresh_sites, args=(now,), daemon=True).start()
+    else:
+        items = _refresh_sites(now)
+    return _dedupe(items, now)
+
+
+_refreshing = threading.Lock()
+
+
+def _refresh_sites(now: datetime) -> list[dict]:
+    with _refreshing:
+        hit = _cache.get(_SITE_KEY)                        # 기다리는 동안 다른 쪽(서버 시작 때)이 이미 읽었으면 그것을 쓴다
+        if hit and time.time() - hit[0] < CACHE_SEC:
+            return hit[1]
+        today =now.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
+        jobs = ([(_wevity, (c, gp)) for c in _WEVITY_CATS for gp in (1, 2)]       # 분야마다 앞 2쪽 (최근 등록 순)
+                + [(_contestkorea, (c, pg)) for c in _CK_CATS for pg in (1, 2)])
+
+        def run(job):
+            try:
+                return job[0](job[1], today)
+            except Exception:
+                return []                                     # 한 곳이 실패해도 나머지는 보여 준다
+        with ThreadPoolExecutor(max_workers=3) as pool:      # 사이트에 부담을 주지 않게 3개씩
+            items = [it for part in pool.map(run, jobs) for it in part]
+        if items:
+            _cache[_SITE_KEY] = (time.time(), items)
+        return items or (_cache.get(_SITE_KEY) or (0, []))[1]
+
+
+def _dedupe(items: list[dict], now: datetime) -> list[dict]:
+    # 두 사이트에 같은 공모전이 이름만 조금 다르게 올라온다 ('2026 서울관광 프롬프톤' / '[2026 서울관광 프롬프톤] 참가자모집')
+    out, seen = [], []
+    for it in sorted(items, key=lambda x: x["deadline"]):
+        key = re.sub(r"참가자?모집|모집|안내|공고|[^가-힣A-Za-z0-9]", "", it["title"]).lower()
+        if it["deadline"] < now.strftime("%Y-%m-%d") or any(
+                len(min(key, k, key=len)) >= 6 and (key in k or k in key) for k in seen):
+            continue
+        seen.append(key)
+        out.append(it)
+    return out
