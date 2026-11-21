@@ -69,7 +69,17 @@ _PARTICLE = re.compile(r"(은|는|이|가|을|를|에|에서|에대해|이요|�
 _BUS = ("버스", "통학", "셔틀")
 _BUS_TIME = ("시간", "몇시", "몇 시", "첫차", "막차", "빠른", "다음", "언제", "운행")
 _CONTEST = ("공모전", "경진대회", "콘테스트", "해커톤")
-_CONTEST_LIST = ("요즘", "진행", "모집", "지금", "현재", "뭐있", "있어", "있나", "목록", "알려", "종류", "어떤", "마감", "임박", "빠른", "언제")
+_CONTEST_LIST = ("요즘", "진행", "모집", "지금", "현재", "뭐있", "있어", "있나", "목록", "알려", "종류", "어떤", "마감", "임박", "빠른", "언제",
+                 "정보", "찾", "추천", "보여")
+
+# 순서·날짜를 묻는 말 ('마감 제일 빠른 거')은 특정 공모전 이름으로 보지 않는다
+_ORDER = set("가장 제일 빠른 빠른순 날짜 마감 마감일 임박 곧 순서 먼저 언제 언제까지 기간 일정 최근 새로운 거 것".split())
+
+# 무엇을 묻는지 정해 주는 말. 이 말이 있으면 주제어 하나라도 되묻지 않고 답한다.
+# 11/21 페르소나 평가: '국가장학금신청언제까지에여'(띄어쓰기 없음), '전과몇번가능', '기숙사 문의'에 되물었다.
+# '알려줘·뭐 있어·정보'처럼 무엇을 원하는지 모르는 말만 붙은 경우('장학금 알려줘')는 그대로 되묻는다
+_ASK_WORDS = ("언제", "어디", "얼마", "몇", "누구", "어떻게", "방법", "기간", "마감", "가능", "문의", "연락처", "전화", "번호",
+              "자격", "서류", "위치", "요금", "시작", "까지")
 
 
 def _tokens(question: str) -> list[str]:
@@ -113,8 +123,14 @@ def check(question: str, campus: str | None, department: str | None) -> dict | N
 
     # 1) 공모전 목록 + 학과 모름. '공모전'만 보낸 것도 목록을 묻는 것으로 본다
     #    (11/20: '공모전' 한 단어에 지난 '다전공 수기 공모전 심사결과' 공지로 답했음)
-    contest_only = any(w in compact for w in _CONTEST) and all(t in _CONTEST or t in FILLER for t in _tokens(q))
-    if any(w in compact for w in _CONTEST) and (any(w in compact for w in _CONTEST_LIST) or contest_only):
+    toks0 = _tokens(q)
+    contest_only = any(w in compact for w in _CONTEST) and all(any(c in t for c in _CONTEST) or t in FILLER for t in toks0)
+    # 11/21 페르소나 평가: '… 대학혁신지원사업 사례영상 경진대회는 언제까지 접수해요?'처럼 특정 공모전을 물으면
+    # 학과를 되묻지 않는다 (공모전·목록 말이 아닌 내용어가 셋 이상이면 특정 공모전 질문으로 본다)
+    content = [t for t in toks0 if len(t) >= 2 and t not in _ORDER and not any(c in t for c in _CONTEST)
+               and not any(w in t for w in _CONTEST_LIST)]
+    specific = len(content) >= 3
+    if any(w in compact for w in _CONTEST) and not specific and (any(w in compact for w in _CONTEST_LIST) or contest_only):
         if not department and not departments.find_in(q):
             return {"field": "department",
                     "question": "어느 학과 학생인가요? 아래에서 고르거나, 목록에 없으면 학과 이름을 적어 주세요. 학과에 맞는 공모전을 먼저 보여 드릴게요.",
@@ -137,7 +153,12 @@ def check(question: str, campus: str | None, department: str | None) -> dict | N
     # 2) 단어 하나만 (주제 목록에 없는 말도). 11/20: '자격증', '비교과', '학생증'처럼 한 단어만 보내면
     #    가장 비슷한 공지 하나(지난해 공지·다른 학과 공지)로 답해서 엉뚱했다 → 무엇이 궁금한지 먼저 묻는다
     toks = _tokens(q)
-    if len(toks) == 1 and len(toks[0]) >= 2:
+    asks = any(w in compact for w in _ASK_WORDS)
+    # '스마트팜공모전'처럼 공모전 말이 붙은 한 덩어리는 공모전 목록으로 (rag._contest_intent)
+    contest_tok = len(toks) == 1 and any(w in toks[0] for w in _CONTEST)
+    # '동아리 뭐 있어'는 목록을 원하는 것이 분명하다 → 되묻지 않고 분과별 목록으로 (rag._club_list)
+    club_list = len(toks) == 1 and toks[0] == "동아리" and any(w in compact for w in ("뭐있", "목록", "종류", "몇"))
+    if len(toks) == 1 and len(toks[0]) >= 2 and not asks and not contest_tok and not club_list:
         topic = toks[0]
         opts = TOPICS.get(topic) or ["신청 방법", "일정", "문의처"]
         return {"field": "refine",
