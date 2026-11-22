@@ -63,8 +63,40 @@ SKIP_TITLE = re.compile(r"^test\b", re.I)               # 'test 공지사항' �
 # 11/20: 처음엔 복학 신청·칭찬합니다·자랑스러운 동문('학번 이름' 제목)·입학상담을 가림 없이 모았다가 빼었고,
 #        사용자 결정으로 다시 수집하되 가리는 쪽으로 바꿨다 (오류보고서 2026-11-20_student-posts-crawled.md)
 STUDENT_BOARDS = re.compile(r"(free|qna|q-a|board|communication|compliment|report|counsel|reinstatement|"
-                            r"proud-alumni|admissions)", re.I)
-# 학번을 가린 뒤 바로 붙은 이름 ('*** 문대희' → '*** ○○○'). 이름 뒤가 공백·쉼표·끝일 때만 ('연락주세요'는 이름이 아님)
+                            r"proud-alumni|admissions|modification|open\.do|suggest|petition)", re.I)
+# 11/21: 열린 총장 게시판(open.do) 목록의 '비밀글 이름 26.10.16', 학과 자료실 글의 '1학년 이름 입니다',
+#        홈페이지 수정 요청(modification.do) 글이 가려지지 않고 들어갔다 → 아래 규칙을 모든 페이지·게시판에 적용
+_LIST_NAME = re.compile(r"(?<![가-힣])([가-힣]{2,4})(?=\s+\d{2}\.\d{2}\.\d{2}(?!\d)\s+(?:조회|\d))")
+_SELF_INTRO = re.compile(r"((?:\d학년|\d{2}학번|학생)\s+)([가-힣]{2,3})(?=\s?(?:입니다|이라고|라고))")
+
+
+_GRADE_NAMES = re.compile(r"((?:(?<![가-힣])[가-힣]{3}\s*,\s*)*(?<![가-힣])[가-힣]{3}\s*)(\(\s*\d\s*학년\s*\))")
+# 흔한 성씨로 시작하는 세 글자만 이름으로 본다 ('참여한 학생'의 '참여한'을 이름으로 잘못 가리지 않게)
+_SURNAME = "김이박최정강조윤장임한오서신권황안송류전홍고문양손배백허남심노하곽성차주우구민진나지엄채원천방공현함변염여추도소석선설마길연위표명기반왕금옥육인맹제모탁국어은편용예봉경사부복태목형피두감호"
+_NAME = f"[{_SURNAME}][가-힣]{{2}}"
+_NOT_NAME = {"유원대", "유학생", "재학생", "신입생", "신편입", "한국어", "전공생", "이번에", "우수한", "성실한", "선발된", "참가한",
+             "지원한", "모든", "해당", "본교생", "남학생", "여학생", "고학년", "저학년", "졸업생", "교환", "기존", "일반",
+             "도우미", "전환기", "선택교", "공통교", "전국대", "장애대", "신규장"}
+# 이름과 '학생' 사이에 띄어쓰기가 있을 때만 ('장애대학생', '신규장학생'을 '장애대'·'신규장' 이름으로 잘못 봤음)
+_NAME_STUDENT = re.compile(rf"(?<![가-힣])({_NAME})(?=\s+(?:학생|군|양)(?=[은는이가의을를과와도께,\s.)]|$))")
+_AWARD_NAMES = re.compile(rf"((?:상|작품|수상)\s*:?\s*\()({_NAME}(?:\s*,\s*{_NAME})*)(\))")
+_MOBILE = re.compile(r"(?<!\d)01[016789][-.\s]\d{3,4}[-.\s]\d{4}(?!\d)")
+
+
+def scrub_names(text: str, board_list: bool = False) -> str:
+    """사람 이름으로 보이는 곳을 '○○○'로. 자기소개('1학년 홍길동 입니다')는 어디서든,
+    목록의 '이름 날짜 조회수'(board_list=True, 학생이 쓰는 게시판 목록)는 그 페이지에서만."""
+    text = _SELF_INTRO.sub(lambda m: m[1] + "○○○", text)
+    # 개인 휴대폰 번호는 어느 페이지든 가린다 (교수 소개·채용 담당자 010 번호). 사무실 유선번호(043-740-…)는 그대로
+    text = _MOBILE.sub("***", text)
+    # 학과 소식의 학생 이름 나열 ('홍길동, 김철수(4학년), …'): '(N학년)' 앞의 이름 묶음을 가린다
+    text = _NAME_STUDENT.sub(lambda m: m[0] if m[1] in _NOT_NAME else "○○○", text)
+    text = _AWARD_NAMES.sub(lambda m: m[1] + re.sub(_NAME, "○○○", m[2]) + m[3], text)
+    text = _GRADE_NAMES.sub(lambda m: re.sub(r"[가-힣]{2,4}", "○○○", m[1]) + m[2], text)
+    if board_list:
+        text = _LIST_NAME.sub("○○○", text)
+    return text
+# 학번을 가린 뒤 바로 붙은 이름 ('*** 홍길동' → '*** ○○○'). 이름 뒤가 공백·쉼표·끝일 때만 ('연락주세요'는 이름이 아님)
 _NO_THEN_NAME = re.compile(r"\*\*\*\s+([가-힣]{2,4})(?=[\s,)]|$)")
 MAIN_CATEGORY = {"academic": "학사정보", "life": "대학생활", "community": "공지", "administration": "대학행정",
                  "introduction": "대학소개", "guide": "안내"}
@@ -95,6 +127,8 @@ def _static(url: str, html: str, title_prefix: str, category: str, campus: str, 
     lines = text_lines(content)
     if sum(len(x) for x in lines) < 40:          # 거의 빈 페이지
         return []
+    private = bool(STUDENT_BOARDS.search(urlparse(url).path))
+    lines = [scrub_names(mask(x) if private else x, board_list=private) for x in lines]
     name = page_title(html) or menu.split(" > ")[-1]
     header = f"[{title_prefix}] {name}"
     return [Chunk(_id(url, i), category, f"{title_prefix}: {name}", text, url, now_kst(),
@@ -145,14 +179,22 @@ def _board(f: Fetcher, url: str, first_html: str, title_prefix: str, category: s
             files = [clean(x.get_text(" ")) for x in view.select(".b-file-box a")]
             if files:
                 lines.append("첨부파일: " + ", ".join(files))
+            # 목록의 글쓴이 이름은 어느 게시판이든 본문·제목에서 가린다 (학과 자료실에 학생 글이 올라온 경우가 있었음)
+            writer = clean(row.select_one(".b-writer").get_text(" ")) if row.select_one(".b-writer") else ""
+            names = tuple(n for n in writer.split() if re.fullmatch(r"[가-힣]{2,4}", n))
             if private:
-                # 목록의 글쓴이 이름도 본문·제목에서 가린다
-                writer = clean(row.select_one(".b-writer").get_text(" ")) if row.select_one(".b-writer") else ""
-                names = tuple(n for n in writer.split() if re.fullmatch(r"[가-힣]{2,4}", n))
+                def hide(x: str) -> str:
+                    return scrub_names(_NO_THEN_NAME.sub("*** ○○○", mask(x, names)))
+            else:
+                # 공지 게시판은 글쓴이 칸이 대개 부서 이름('학생처', '교무팀')이라 사람 이름처럼 생긴 것만 가린다.
+                # 부서 전화번호는 공지에 필요한 정보라 가리지 않는다
+                people = [n for n in names if len(n) == 3 and not re.search(r"(처|팀|과|부|원|실|단|회|소|관|센터|본부)$", n)]
 
                 def hide(x: str) -> str:
-                    return _NO_THEN_NAME.sub("*** ○○○", mask(x, names))
-                lines, title = [hide(x) for x in lines], hide(title)
+                    for n in people:
+                        x = x.replace(n, "○○○")
+                    return scrub_names(x)
+            lines, title = [hide(x) for x in lines], hide(title)
             header = f"[{title_prefix}] {title} (게시일 {posted or '미상'})"
             for i, text in enumerate(pack(header, lines)):
                 out.append(Chunk(_id(view_url, i), category, f"{title_prefix}: {title}", text, view_url, now_kst(),

@@ -66,7 +66,7 @@ def chungnam_contests(now: datetime, limit: int = 5) -> list[dict]:
     if hit and time.time() - hit[0] < CACHE_SEC:
         items = hit[1]
     else:
-        req = urllib.request.Request(CHUNGNAM_API, headers={"User-Agent": "AskCampusBot/0.1 (U1 University capstone)"})
+        req = urllib.request.Request(CHUNGNAM_API, headers={"User-Agent": "simple-list-reader/1.0"})
         try:
             with urllib.request.urlopen(req, timeout=5) as r:
                 data = json.load(r)
@@ -135,7 +135,7 @@ def contest_news(topic_words: list[str], now: datetime, limit: int = 5) -> list[
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
-_UA = {"User-Agent": "AskCampusBot/0.1 (U1 University capstone)"}
+_UA = {"User-Agent": "simple-list-reader/1.0"}
 WEVITY = "https://www.wevity.com/"
 _WEVITY_CATS = (1, 2, 3, 10, 19, 20, 21, 22, 23, 24, 25, 26, 28, 29, 88)
 CONTESTKOREA = "https://www.contestkorea.com/sub/"
