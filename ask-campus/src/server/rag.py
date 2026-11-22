@@ -527,6 +527,52 @@ def _search_hits(question: str, qvec: list[float], where: dict | None) -> list[d
     return _rerank(question, hits + extra, _now())
 
 
+_CAL = re.compile(r"^\[학사일정\] (.+?): (\d{4})\.(\d{2})\.(\d{2}) ~ (\d{4})\.(\d{2})\.(\d{2})")
+
+
+def _calendar_answer(question: str, hits: list[dict], now: datetime) -> tuple[str, list[dict]] | None:
+    """날짜를 묻는데 1위 근거가 질문과 맞는 학사일정 한 줄이면 sLLM 없이 그 날짜로 답한다.
+
+    11/22 페르소나 평가: '수강신청 기간'에 1위 근거가 '2027학년도 제 1학기 수강신청: 2027.02.15 ~ 02.19'였는데
+    sLLM이 2위 일반 안내('학사일정에 명시된 기간')를 보고 '추후 공지'라고 답했다.
+    질문의 핵심어가 일정 이름에 절반 이상 들어 있고, 다가오는 일정이거나 과거형으로 물은 경우만 쓴다.
+    """
+    if not hits or not any(w in question for w in _WHEN) or _TWO_Q.search(question):
+        return None
+    m = _CAL.match(hits[0]["document"])
+    if not m:
+        return None
+    name = m[1]
+    words = [t for t in clarifier._tokens(question) if len(t) >= 2 and not any(w in t for w in _WHEN)]
+    flat = name.replace(" ", "")
+    # 핵심어가 모두 일정 이름에 있어야 한다 (회귀 평가: '2학기 중간고사'에 '제 2학기 기말고사', '환불 2/3선'에 '1/2선'으로 답함)
+    if not words or not all(w in flat for w in words):
+        return None
+    if any(f not in flat for f in re.findall(r"\d+/\d+", question)):
+        return None
+    today = now.strftime("%Y-%m-%d")
+    start, end = f"{m[2]}-{m[3]}-{m[4]}", f"{m[5]}-{m[6]}-{m[7]}"
+    past_q = any(w in question for w in ("였", "었어", "했어", "했지", "지났", "작년", "지난"))
+    if end < today and not past_q:
+        return None
+
+    def ko(y, mo, d):
+        return f"{int(y)}년 {int(mo)}월 {int(d)}일"
+    if start == end:
+        when = ko(m[2], m[3], m[4])
+    else:
+        until = ko(m[5], m[6], m[7]) if m[5] != m[2] else f"{int(m[6])}월 {int(m[7])}일"
+        when = f"{ko(m[2], m[3], m[4])}부터 {until}까지"
+    last = next((c for c in reversed(name) if "가" <= c <= "힣"), "가")
+    batchim = (ord(last) - 0xAC00) % 28 != 0
+    topic = "은" if batchim else "는"
+    if end < today:
+        tense = "이었습니다" if when.endswith("일") else "였습니다"
+    else:
+        tense = "입니다"
+    return f"{name}{topic} {when}{tense}.", hits[:1]
+
+
 def _llm_checked(question: str, contexts: list[str], used: list[dict], now: datetime) -> str:
     """sLLM 답 + 근거에 없는 값이면 근거없음 + 지난 자료면 연도 표시."""
     text = llm.answer(question, contexts, _now_text(now))
@@ -584,6 +630,10 @@ def _keyword_hits(core: str, where: dict | None) -> list[dict]:
     return ranked[:config.TOP_K]
 
 
+_STUDENT_POST = re.compile(r"/(reinstatement|proud-alumni|compliment|counsel|communication|petition|suggest|modification|open)"
+                           r"\.do", re.I)
+
+
 def _ranked_hits(qvec: list[float], where: dict | None, question: str = "") -> list[dict]:
     """공식 자료(공지·학사일정·통학버스·동아리·FAQ)를 먼저, 학생 Q&A는 최대 1개만 붙인다.
 
@@ -592,12 +642,16 @@ def _ranked_hits(qvec: list[float], where: dict | None, question: str = "") -> l
     """
     def search(cond):
         w = {"$and": [where, cond]} if where else cond
-        hits = [h for h in index.search("chunks", qvec, config.TOP_K * 2, w) if h["score"] >= config.MIN_SCORE]
+        # 후보를 넉넉히 받는다: 학생 게시판 글('복학 신청합니다' 여러 개)이 후보를 채워 학사일정이 빠지는 일이 있었음
+        hits = [h for h in index.search("chunks", qvec, config.TOP_K * 5, w) if h["score"] >= config.MIN_SCORE]
         return _rerank(question, hits, _now())[:config.TOP_K]
 
     official = search({"category": {"$ne": "Q&A"}})
-    official = _with_club_summary(official)
-    qna = search({"category": "Q&A"})
+    # 학생이 쓴 게시판 글(복학 신청·칭찬·상담 등)은 공식 자료가 아니라 Q&A처럼 최대 1개만 쓴다.
+    # 11/21: '1학기 복학 신청 언제?'에 학생 글 '복학 신청합니다'가 2위로 들어와 학사일정(2027.01.06)을 밀어냈다
+    student = [h for h in official if _STUDENT_POST.search(h["meta"].get("source_url", ""))]
+    official = _with_club_summary([h for h in official if h not in student])
+    qna = sorted(search({"category": "Q&A"}) + student, key=lambda h: h["score"], reverse=True)
     top = official[:config.CONTEXT_K - 1] + qna[:1]
     rest = official[config.CONTEXT_K - 1:] + qna[1:]
     return top + rest           # 앞에서부터 CONTEXT_K개가 sLLM에 넘어감
@@ -945,9 +999,14 @@ def ask(question: str, category: str | None = None, campus: str | None = None,
             if table:
                 contexts, used = table
                 tq = _timetable_query(question, contexts[0], now)
+            cal = None if tq else _calendar_answer(question, hits, now)
             if tq:
                 text = _timetable_answer(tq, contexts[0].split("\n", 1)[0])
                 answered_by = "timetable"
+            elif cal:
+                text, used = cal
+                contexts = [h["document"] for h in used]
+                answered_by = "calendar"
             elif config.USE_LLM:
                 text = _llm_checked(question, contexts, used, now)
                 answered_by = "llm"
