@@ -76,6 +76,51 @@ CREATE TABLE IF NOT EXISTS query_log (
     response_ms INTEGER NOT NULL,
     created_at  DATETIME NOT NULL
 );
+CREATE TABLE IF NOT EXISTS sft_example (
+    sft_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    question   VARCHAR(200) NOT NULL UNIQUE,
+    campus     VARCHAR(10),
+    contexts   TEXT NOT NULL,
+    draft      TEXT NOT NULL,
+    answer     TEXT NOT NULL,
+    source     VARCHAR(20),
+    ref        TEXT,
+    hint       TEXT,
+    asked_at   DATETIME NOT NULL,
+    status     VARCHAR(10) NOT NULL DEFAULT '대기',
+    handled_at DATETIME
+);
+CREATE TABLE IF NOT EXISTS sft_asked (src VARCHAR(20) PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS faq_candidate (
+    cand_id    INTEGER PRIMARY KEY AUTOINCREMENT,
+    question   VARCHAR(100) NOT NULL UNIQUE,
+    answer     TEXT NOT NULL DEFAULT '',
+    basis      TEXT,
+    todo       TEXT,
+    status     VARCHAR(10) NOT NULL DEFAULT '대기',
+    handled_at DATETIME
+);
+CREATE TABLE IF NOT EXISTS eval_result (
+    eval_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    run         VARCHAR(40) NOT NULL,
+    qid         VARCHAR(10) NOT NULL,
+    split       VARCHAR(10),
+    topic       VARCHAR(40),
+    who         VARCHAR(60),
+    campus      VARCHAR(10),
+    question    VARCHAR(200) NOT NULL,
+    kind        VARCHAR(10),
+    key         TEXT,
+    src         VARCHAR(20),
+    answer_type VARCHAR(10),
+    answer      TEXT,
+    contexts    TEXT,
+    sources     TEXT,
+    response_ms INTEGER,
+    verdict     VARCHAR(10) NOT NULL DEFAULT '미채점',
+    reason      TEXT,
+    created_at  DATETIME NOT NULL
+);
 """
 
 _PHONE = re.compile(r"01[016789][-\s.]?\d{3,4}[-\s.]?\d{4}")
@@ -116,6 +161,14 @@ def init():
         for col in ("answer", "contexts"):
             if col not in cols:
                 con.execute(f"ALTER TABLE query_log ADD COLUMN {col} TEXT")
+        # 11/22: 학습 데이터 후보에 검토 의견(추천·이유·고친 안)을 붙인다. 최종 결정은 관리자가 한다
+        sft = {r["name"] for r in con.execute("PRAGMA table_info(sft_example)")}
+        for col in ("advice", "advice_note", "suggested"):
+            if col not in sft:
+                con.execute(f"ALTER TABLE sft_example ADD COLUMN {col} TEXT")
+        # 11/22: 평가 질문이 관리자 답변 대기에 섞였다 → 누가 물었는지 구분 ('user' 사용자, 'eval' 평가 스크립트)
+        if "source" not in cols:
+            con.execute("ALTER TABLE query_log ADD COLUMN source TEXT NOT NULL DEFAULT 'user'")
 
 
 def expires_from(ts: str) -> str:

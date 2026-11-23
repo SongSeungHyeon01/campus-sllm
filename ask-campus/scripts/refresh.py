@@ -21,8 +21,10 @@ PY = sys.executable
 LOG = ROOT / "data" / "logs" / "refresh.log"
 SERVER = "http://127.0.0.1:8000"
 JOBS = {
-    "daily": [["-m", "src.ingest.run", "--notice-pages", "6"]],
-    "weekly": [["-m", "src.ingest.run", "--notice-pages", "6"], ["-m", "src.ingest.run_login"], ["-m", "src.ingest.run_site"]],
+    # 수집한 뒤에는 늘 rescrub으로 이름·비밀번호 규칙을 다시 정리한다 (11/22)
+    "daily": [["-m", "src.ingest.run", "--notice-pages", "6"], ["scripts/rescrub.py", "rescrub"]],
+    "weekly": [["-m", "src.ingest.run", "--notice-pages", "6"], ["-m", "src.ingest.run_login"], ["-m", "src.ingest.run_site"],
+               ["scripts/rescrub.py", "rescrub"]],
 }
 
 

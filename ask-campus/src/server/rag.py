@@ -9,6 +9,7 @@
 import json
 import re
 import time
+from contextvars import ContextVar
 from datetime import datetime, timedelta
 
 import numpy as np
@@ -111,6 +112,10 @@ def _bus_table(hits: list[dict], question: str, now: datetime) -> tuple[list[str
     """
     if hits[0]["meta"].get("category") != "통학버스":
         return None
+    # 11/22: '영동 기숙사 겨울방학에도 있을 수 있어요?'에 영동역 버스 시간표로 답했다 ('영동'이 '영동역'에 걸림)
+    compact = question.replace(" ", "")
+    if not _bus_intent(question) and not any(s in compact for s in clarifier._stops(None)):
+        return None
     bus = [h for h in hits if h["meta"].get("category") == "통학버스"]
     day, _ = _day_type(question, now)
 
@@ -182,6 +187,9 @@ def _aliases(name: str) -> list[str]:
 
 
 def _bus_intent(question: str) -> bool:
+    # 시내버스는 학교 통학버스가 아니다 (11/22: '영동 시내버스 시간표'에 통학버스 시간을 답함)
+    if "시내버스" in question.replace(" ", "") and "통학" not in question:
+        return False
     return any(w in question for w in ("버스", "통학", "셔틀", "첫차", "막차", "차 시간", "몇 시 차", "빠른 차", "가는 차"))
 
 
@@ -307,6 +315,42 @@ def _dates(text: str) -> list[str]:
     return out
 
 
+def _series(title: str) -> str:
+    """'2026학년도 2학기 복수전공 … 신청 공고' → 연도·학기·학과·말머리를 뺀 이름"""
+    t = re.sub(r"^[^:]{2,12}:\s*", "", title)
+    t = re.sub(r"\[[^\]]*\]|\([^)]*\)|20\d{2}\s*(학년도|년도|년)?|[12]\s*학기|[^가-힣A-Za-z]", "", t)
+    return "".join(sorted(t))          # '복수전공, 다전공, 부전공'과 '복수전공, 부전공, 다전공'을 같은 공지로
+
+
+def _newest_of_series(question: str, hits: list[dict]) -> list[dict]:
+    """해마다 올라오는 같은 공지는 가장 최근 것만 남긴다. 연도나 지난 일을 물으면 그대로 둔다.
+
+    11/22: '복수전공 신청서 어디에 내요?'의 근거 3개가 2025-2, 2026-1, 2026-2 공고로 모두 같은 공지였다.
+    또 묻지 않은 학과 사이트의 글(간호학과 자퇴 안내의 학과 전화번호)이 모든 학생에게 안내됐다 → 조금 내린다.
+    """
+    if re.search(r"20\d{2}|작년|지난|였|했어", question):
+        return hits
+    best: dict[str, tuple[str, str]] = {}
+
+    def posted(h):
+        m = re.search(r"게시일 (20\d{2}-\d{2}-\d{2})", h["document"][:300])
+        return m[1] if m else ""
+    for h in hits:
+        key, d = _series(h["meta"].get("title", "")), posted(h)
+        if len(key) >= 8 and d and d > best.get(key, ("", ""))[0]:
+            best[key] = (d, h["meta"].get("source_url", ""))
+    out = []
+    for h in hits:
+        title, key, d = h["meta"].get("title", ""), _series(h["meta"].get("title", "")), posted(h)
+        if len(key) >= 8 and d and key in best and d < best[key][0][:10] and d[:7] != best[key][0][:7]:
+            continue
+        dept = title.split(":", 1)[0]
+        if dept in departments.DEPARTMENTS and dept not in question and departments.find_in(question) != dept:
+            h = {**h, "score": h["score"] - 0.03}
+        out.append(h)
+    return sorted(out, key=lambda h: h["score"], reverse=True)
+
+
 def _rerank(question: str, hits: list[dict], now: datetime) -> list[dict]:
     """날짜를 묻는 질문이면 이미 지난 일정은 내리고 다가오는 일정은 올린다. 대학원 자료는 '대학원'을 물을 때만.
 
@@ -315,6 +359,7 @@ def _rerank(question: str, hits: list[dict], now: datetime) -> list[dict]:
     """
     if "대학원" not in question:
         hits = [h for h in hits if not h["meta"].get("title", "").startswith("대학원:")]
+    hits = _newest_of_series(question, hits)
     if not any(w in question for w in _WHEN):
         return hits
     # 반년 넘게 지난 일정만 내린다. 올해 이미 지난 일정(하계 계절학기, 2학기 수강정정)을 묻는 질문도 있어서
@@ -372,6 +417,9 @@ _MD_ANS = re.compile(r"(?<!\d)(\d{1,2})월\s*(\d{1,2})일")
 _MD_CTX = re.compile(r"(?<!\d)(\d{1,2})\s*(?:[./]|월)\s*(\d{1,2})(?!\d)")
 
 
+_UNIT = re.compile(r"(\d+(?:\.\d+)?)(주(?!차|말|년|민|간업)|개월|학점|회(?!차|의)|%)")
+
+
 def _grounded(answer: str, contexts: list[str]) -> bool:
     """답에 나온 시간·전화번호·금액·날짜(월일)가 근거에 모두 있는가.
 
@@ -389,11 +437,29 @@ def _grounded(answer: str, contexts: list[str]) -> bool:
     for num, man in _WON.findall(answer):
         if num.replace(",", "") not in flat.replace(",", ""):
             return False
+    # 기간·학점·횟수 (11/22: 국가장학금 입금을 '심사 완료 후 1~2주', 편입생 졸업에 '교양 필수 11학점'을 지어냄)
+    if any(f"{n}{u}" not in flat for n, u in _UNIT.findall(re.sub(r"\s+", "", answer))):
+        return False
     ctx_md = {(int(m), int(d)) for m, d in _MD_CTX.findall(ctx)}
     # '2026. 09. 10(목) 11:00 ~ 11(금) 24:00'처럼 끝나는 날은 월을 빼고 쓴다 → 같은 달의 '11(' '11일'도 인정
     months = {m for m, _ in ctx_md}
     days = {int(d) for d in re.findall(r"(?<![\d.])(\d{1,2})\s*(?:\(|일)", ctx)}
     return all((int(m), int(d)) in ctx_md or (int(m) in months and int(d) in days) for m, d in _MD_ANS.findall(answer))
+
+
+# 11/22: '전자출결 비번 까먹었는데'에 옛 Q&A의 초기 비밀번호 규칙을 알려 줬다. 누구나 남의 계정에 들어갈 수 있는 정보라 막는다
+# '아이디(학번), 비밀번호 입력' 같은 로그인 순서는 남기고, 비밀번호가 무엇인지 알려 주는 문장만 막는다
+_PW_RULE = re.compile(r"(비밀번호|비번|패스워드|password|(?<![a-z])pw(?![a-z])).{0,25}(학번|주민|생년월일|뒷\s*(번호|자리)|동일|같습니다|초기\s*값|기본\s*값|설정되어)"
+                      r"|(초기|기본)\s*(비밀번호|비번)", re.I)
+PW_ANSWER = "비밀번호를 잊었으면 전산지원센터에 문의해 주세요. 보안을 위해 초기 비밀번호는 안내하지 않습니다."
+
+
+def _hide_password(answer: str) -> str:
+    parts = re.split(r"(?<=[다요]\.)\s+|\n+", answer)
+    keep = [p for p in parts if not _PW_RULE.search(p)]
+    if len(keep) == len(parts):
+        return answer
+    return "\n".join([p for p in keep if p.strip() and len(p) > 12] + [PW_ANSWER])
 
 
 _SENT_END = re.compile(r"(?<=[다요]\.)\s+|\n+")
@@ -416,10 +482,18 @@ def _stale_note(question: str, answer: str, used: list[dict], now: datetime) -> 
 
     11/21 페르소나 평가: '축제 언제야'에 2025학년도 축제 공지 하나로 '9월 30일 13시부터'라고 올해 일정처럼 답했다.
     """
+    qa = [h for h in used if h["meta"].get("category") == "Q&A"]
+    if used and used[0]["meta"].get("category") == "Q&A" and len(qa) == len(used):
+        year = max((d[:4] for h in qa for d in _dates(h["document"][:300])), default="")
+        if year and int(year) < now.year:
+            return f"학교 Q&A의 지난 답변({year}년까지)을 바탕으로 한 내용이라 지금과 다를 수 있어요.\n{answer}"
     # '최대 몇 학기까지'처럼 규정을 묻는 말에는 붙이지 않는다 (같은 평가: 휴학 규정 답에 '2023년 자료'가 붙음)
     if not any(w in question for w in ("언제", "날짜", "일정", "며칠", "몇 일")):
         return answer
-    ds = [d for h in used for d in _dates(h["meta"].get("title", "") + " " + h["document"][:400])]
+    each = [_dates(h["meta"].get("title", "") + " " + h["document"][:400]) for h in used]
+    if not all(each):          # 날짜 없는 규정·FAQ가 근거에 있으면 '지난 자료'라고 하지 않는다 (11/22: 군휴학 '상시' 규정)
+        return answer
+    ds = [d for x in each for d in x]
     stale = (now - timedelta(days=180)).strftime("%Y-%m-%d")
     if not ds or max(ds) >= stale:
         return answer
@@ -573,6 +647,94 @@ def _calendar_answer(question: str, hits: list[dict], now: datetime) -> tuple[st
     return f"{name}{topic} {when}{tense}.", hits[:1]
 
 
+_REFUND = re.compile(r"^\[학사일정\] 등록금 환불 (\d)/(\d)선: (\d{4})\.(\d{2})\.(\d{2})")
+
+
+def _refund_answer(question: str, now: datetime) -> tuple[str, list[dict]] | None:
+    """'지금 자퇴하면 등록금 얼마나 돌려받아요?' → 학사일정의 환불선(5/6, 2/3, 1/2) 중 오늘에 해당하는 것.
+
+    날짜를 비교하는 계산이라 sLLM에 맡기지 않는다 (11/22 평가에서 못 답함). 특정 비율·날짜를 물으면 일반 경로로.
+    """
+    c = question.replace(" ", "")
+    if not (("등록금" in c or "학비" in c) and any(w in c for w in ("환불", "돌려받", "반환"))):
+        return None
+    if not any(w in c for w in ("지금", "오늘", "자퇴하면", "휴학하면", "그만두면")) or re.search(r"\d/\d|마지막|반돌려", c):
+        return None
+    with db.connect() as con:
+        rows = con.execute("SELECT title, content, source_url, menu_path, collected_at, category, chunk_id FROM chunk "
+                           "WHERE title LIKE '학사일정: 등록금 환불%'").fetchall()
+    lines = sorted((f"{m[3]}-{m[4]}-{m[5]}", f"{m[2]}분의 {m[1]}", r) for r in rows if (m := _REFUND.match(r["content"])))
+    today = now.strftime("%Y-%m-%d")
+    sem = [x for x in lines if abs((datetime.strptime(x[0], "%Y-%m-%d") - now.replace(tzinfo=None)).days) <= 100]
+    if not sem:
+        return None
+    nxt = next((x for x in sem if x[0] >= today), None)
+    ko = lambda d: f"{int(d[5:7])}월 {int(d[8:10])}일"
+    if nxt:
+        text = f"오늘 기준으로 자퇴하면 등록금의 {nxt[1]}을 돌려받을 수 있습니다 ({ko(nxt[0])}까지)."
+        after = [x for x in sem if x[0] > nxt[0]]
+        text += (f"\n· 그 뒤 {ko(after[0][0])}까지: {after[0][1]}" if after else f"\n· {ko(nxt[0])}이 지나면 돌려받지 못합니다.")
+    else:
+        text = f"이번 학기 환불 기간({ko(sem[-1][0])}까지)이 지나 등록금을 돌려받지 못합니다."
+    text += "\n· 장학금을 받았으면 금액이 달라질 수 있으니 학생처에 확인해 주세요."
+    r = (nxt or sem[-1])[2]
+    hit = {"id": r["chunk_id"], "score": 1.0, "document": r["content"],
+           "meta": {"title": r["title"], "category": r["category"], "campus": "공통", "source_url": r["source_url"],
+                    "menu_path": r["menu_path"] or "", "collected_at": r["collected_at"]}}
+    return text, [hit]
+
+
+def _graduation_answer(question: str) -> tuple[str, list[dict]] | None:
+    """졸업 요건·학점 충족 질문은 '졸업' 규정 페이지의 문장을 그대로 보여 준다.
+
+    11/22 평가: '4학년 1학기에 120학점 채웠는데 졸업 가능?'에 근거(정규학기 8학기)가 있는데도 sLLM이 '가능합니다'라고 답했다.
+    졸업을 잘못 안내하면 피해가 커서 판단을 맡기지 않는다. 유예·조기졸업·증명서·논문 질문은 일반 경로로.
+    """
+    c = question.replace(" ", "")
+    if "졸업" not in c or any(w in c for w in ("유예", "조기졸업", "증명서", "논문", "예정", "학위수여", "졸업식", "대학원", "사진", "앨범")):
+        return None
+    if not (any(w in c for w in ("요건", "조건", "기준", "뭐채", "뭘채", "채워야", "필요한거")) or ("학점" in c and any(
+            w in c for w in ("채웠", "채우면", "다들", "가능", "바로졸업")))):
+        return None
+    with db.connect() as con:
+        rows = con.execute("SELECT chunk_id, title, content, source_url, menu_path, collected_at, category FROM chunk "
+                           "WHERE title = '유원대: 졸업' ORDER BY rowid").fetchall()
+    text = re.sub(r"\s+", " ", " ".join(r["content"] for r in rows))
+    sem = re.search(r"정규학기 이수\(([^)]*)\)", text)
+    gpa = re.search(r"졸업 당시 평점평균 [\d.]+ 이상", text)
+    credit = re.search(r"17학번 이후 신ㆍ편입생 120학점 이상", text)
+    if not (sem and gpa and credit):
+        return None
+    out = ["졸업하려면 아래를 모두 갖춰야 합니다. 학점만 채웠다고 바로 졸업되지는 않습니다.",
+           f"· 정규학기 이수: {sem[1]}", f"· 졸업 학점: {credit[0]} (학번마다 다름)", "· 학과별 졸업논문 합격", f"· {gpa[0]}"]
+    if "편입" in c:
+        out.append("· 편입생: 수료학년의 교양과목은 이수한 것으로 인정되고, 전공 최저 이수학점은 편입 학년과 학번에 따라 다릅니다.")
+    out.append("\n본인이 충족했는지는 학과 사무실이나 교무처에 확인해 주세요.")
+    r = rows[0]
+    return "\n".join(out), [{"id": r["chunk_id"], "score": 1.0, "document": r["content"],
+                             "meta": {"title": r["title"], "category": r["category"], "campus": "공통",
+                                      "source_url": r["source_url"], "menu_path": r["menu_path"] or "",
+                                      "collected_at": r["collected_at"]}}]
+
+
+# 답을 못 찾았을 때 어디에 물을지. 번호는 학교 홈페이지 안내(증명서발급, 국제교류원, 생활관 페이지)에서 확인한 것만 적는다
+_CONTACTS = [
+    (("기숙사", "생활관"), "생활관 (043-744-4557)"), (("유학생", "비자", "외국인", "TOPIK", "토픽", "교환학생"), "국제교류원 (043-740-1361)"),
+    (("장학", "국가근로", "U1STAR", "학자금", "동아리", "축제", "학생증", "봉사"), "학생처 학생감동본부"),
+    (("로그인", "비밀번호", "비번", "오피스", "office", "전자출결", "와이파이", "이메일", "LMS", "홈페이지"), "전산지원센터"),
+    (("도서관", "열람실"), "도서관"), (("취업", "인턴", "자격증"), "취창업지원센터"),
+    (("휴학", "복학", "전과", "자퇴", "제적", "재입학", "졸업", "성적", "학점", "수강", "재수강", "계절", "증명서", "전공", "교양", "편입", "학사"),
+     "교무처 (043-740-1053)"),
+    (("등록금", "납부", "환불"), "학생처 학생감동본부"),
+]
+
+
+def _not_found_with_contact(question: str) -> str:
+    c = question.replace(" ", "").lower()
+    who = next((name for words, name in _CONTACTS if any(w.lower() in c for w in words)), None)
+    return NOT_FOUND_ANSWER if who is None else f"{NOT_FOUND_ANSWER}\n· 이 내용은 {who}에 문의하면 됩니다."
+
+
 def _llm_checked(question: str, contexts: list[str], used: list[dict], now: datetime) -> str:
     """sLLM 답 + 근거에 없는 값이면 근거없음 + 지난 자료면 연도 표시."""
     text = llm.answer(question, contexts, _now_text(now))
@@ -580,6 +742,96 @@ def _llm_checked(question: str, contexts: list[str], used: list[dict], now: date
         text = _keep_grounded(text, contexts)
         text = _stale_note(question, text, used, now) if text else NOT_FOUND_ANSWER
     return text
+
+
+# 학사 규정 페이지: 질문에 이 말이 있으면 그 페이지에서 질문과 가장 가까운 조각을 근거 맨 앞에 넣는다.
+# 11/22 Q&A 바탕 평가: '지금 자퇴하면 등록금 얼마 돌려받아요?'에 환불 기준(등록안내)이, '120학점 채우면 졸업?'에 졸업 기준이
+# 근거에 없었다. 규정 페이지는 길고 여러 내용이 섞여 임베딩 점수가 낮고, 말투가 비슷한 옛 Q&A에 밀린다.
+_RULE_PAGES = [
+    (("환불", "돌려받", "반환"), "유원대: 등록안내"),
+    (("졸업유예", "졸업요건", "졸업", "편입생"), "유원대: 졸업"),
+    (("휴학", "복학", "자퇴", "재입학", "전과", "제적"), "유원대: 학적변동"),
+    (("학사경고",), "유원대: 학사경고"),
+    (("이의신청", "성적이상", "성적정정"), "유원대: 성적열람 및 이의신청"),
+    (("상대평가", "성적평가", "학점비율"), "유원대: 성적평가"),
+    (("계절학기",), "유원대: 계절학기"),
+    (("증명서", "영수증", "납입증명"), "유원대: 증명서발급"),
+    (("수강신청", "수강정정"), "유원대: 수강신청안내"),
+    (("장학금두개", "장학금중복", "중복수혜", "둘다받", "장학금원칙"), "유원대: 장학금지급원칙"),
+    (("등록금납부", "등록금안내"), "유원대: 등록안내"),
+]
+
+
+# 질문에 이 말이 있고 날짜를 물으면, 학사일정에서 그 이름이 든 다가오는 일정을 근거 맨 앞에 넣는다
+_EVENTS = [(("복학",), "복학"), (("재입학",), "재입학"), (("수강정정",), "수강정정"), (("수강신청",), "수강신청"),
+           (("성적정정", "성적이의", "이의신청", "성적확인"), "성적 확인 및 정정"), (("등록금",), "등록"),
+           (("졸업식", "학위수여"), "학위수여"), (("기말",), "기말고사"), (("중간고사",), "중간고사"), (("개강",), "개강"), (("계절학기",), "계절학기")]
+
+
+def _upcoming_event(question: str) -> list[dict]:
+    """11/22: '다음 학기 등록금 언제 내요?', '3월에 복학하려는데 신청 언제?'에 학사일정이 근거에 없어 날짜를 못 알려 줬다."""
+    compact = question.replace(" ", "")
+    if not any(w in question for w in _WHEN) and not any(w in compact for w in ("이의신청", "성적정정")):
+        return []
+    if any(w in compact for w in ("환불", "돌려", "반환", "분할", "였", "했어", "지난", "작년")):
+        return []
+    key = next((k for words, k in _EVENTS if any(w in compact for w in words)), None)
+    if key is None:
+        return []
+    sem = re.search(r"([12])\s*학기", question)
+    today = _now().strftime("%Y-%m-%d")
+    with db.connect() as con:
+        rows = con.execute("SELECT chunk_id, title, content, source_url, menu_path, collected_at, category FROM chunk "
+                           "WHERE title LIKE '학사일정:%' AND title LIKE ?", (f"%{key}%",)).fetchall()
+    best = None
+    for r in rows:
+        m = _CAL.match(r["content"])
+        if not m or "환불" in m[1] or (key == "등록" and not re.search(r"등록$", m[1])):
+            continue
+        if sem and re.search(r"[12]\s*학기", m[1]) and not re.search(sem[1] + r"\s*학기", m[1]):
+            continue
+        end = f"{m[5]}-{m[6]}-{m[7]}"
+        if end >= today and (best is None or end < best[0]):
+            best = (end, r)
+    if best is None:
+        return []
+    r = best[1]
+    return [{"id": r["chunk_id"], "score": 0.9, "document": r["content"],
+             "meta": {"title": r["title"], "category": r["category"], "campus": "공통", "source_url": r["source_url"],
+                      "menu_path": r["menu_path"] or "", "collected_at": r["collected_at"]}}]
+
+
+_JOSA = re.compile(r"(에서|에게|으로|까지|부터|이랑|하고|은|는|이|가|을|를|에|도|로|의|랑|과|와|요)$")
+
+
+def _rare_word_hits(question: str, qvec: list[float], where: dict | None, hits: list[dict]) -> list[dict]:
+    """질문의 드문 낱말(강의계획서 등)이 검색된 근거에 하나도 없으면, 그 낱말이 든 조각 중 가장 가까운 것을 넣는다.
+
+    11/22: '강의계획서 어디서 봐요?'의 근거에 강의계획서라는 말이 없는데도 다른 게시판으로 답했다.
+    """
+    top = " ".join(h["document"] for h in hits[:config.CONTEXT_K])
+    for w in sorted({_JOSA.sub("", t) for t in re.findall(r"[가-힣A-Za-z]{3,}", question)}, key=len, reverse=True):
+        if len(w) < 3 or w in clarifier.FILLER or w in _CHAT_WORDS or w in top:
+            continue
+        with db.connect() as con:
+            n = con.execute("SELECT count(*) FROM chunk WHERE instr(content, ?)", (w,)).fetchone()[0]
+        if 1 <= n <= 40:
+            found = [h for h in index.search("chunks", qvec, 2, where, contains=w) if h["score"] >= config.MIN_SCORE - 0.03
+                     and not any((h["meta"].get("source_url") or "").endswith(x) for x in _EXCLUDE.get())]
+            if found:
+                return found[:1]
+    return []
+
+
+def _rule_hits(question: str, qvec: list[float]) -> list[dict]:
+    compact = re.sub("졸업식|졸업앨범|졸업사진", "", question.replace(" ", ""))
+    out = []
+    for words, title in _RULE_PAGES:
+        if any(w in compact for w in words):
+            out += index.search("chunks", qvec, 1, {"title": title})
+        if len(out) >= 2:
+            break
+    return out
 
 
 def _split_two(question: str) -> tuple[str, str]:
@@ -643,15 +895,25 @@ def _ranked_hits(qvec: list[float], where: dict | None, question: str = "") -> l
     def search(cond):
         w = {"$and": [where, cond]} if where else cond
         # 후보를 넉넉히 받는다: 학생 게시판 글('복학 신청합니다' 여러 개)이 후보를 채워 학사일정이 빠지는 일이 있었음
-        hits = [h for h in index.search("chunks", qvec, config.TOP_K * 5, w) if h["score"] >= config.MIN_SCORE]
+        hits = [h for h in index.search("chunks", qvec, config.TOP_K * 5, w) if h["score"] >= config.MIN_SCORE
+                and not any((h["meta"].get("source_url") or "").endswith(x) for x in _EXCLUDE.get())]
         return _rerank(question, hits, _now())[:config.TOP_K]
 
     official = search({"category": {"$ne": "Q&A"}})
     # 학생이 쓴 게시판 글(복학 신청·칭찬·상담 등)은 공식 자료가 아니라 Q&A처럼 최대 1개만 쓴다.
     # 11/21: '1학기 복학 신청 언제?'에 학생 글 '복학 신청합니다'가 2위로 들어와 학사일정(2027.01.06)을 밀어냈다
+    stop_named = any(s in question.replace(" ", "") for s in clarifier._stops(None))
+    if not _bus_intent(question) and not stop_named:      # 버스를 묻지 않았으면 시간표는 근거에서 뺀다
+        official = [h for h in official if h["meta"].get("category") != "통학버스"]
     student = [h for h in official if _STUDENT_POST.search(h["meta"].get("source_url", ""))]
     official = _with_club_summary([h for h in official if h not in student])
     qna = sorted(search({"category": "Q&A"}) + student, key=lambda h: h["score"], reverse=True)
+    cal_top = any(h["meta"].get("title", "").startswith("학사일정:") for h in official[:2])
+    front = [] if cal_top and any(w in question for w in _WHEN) else _rule_hits(question, qvec)
+    front = (_upcoming_event(question) + front)[:config.CONTEXT_K - 1] or _rare_word_hits(question, qvec, where, official + qna)
+    if front:
+        ids = {h["id"] for h in front}
+        official = front + [h for h in official if h["id"] not in ids]
     top = official[:config.CONTEXT_K - 1] + qna[:1]
     rest = official[config.CONTEXT_K - 1:] + qna[1:]
     return top + rest           # 앞에서부터 CONTEXT_K개가 sLLM에 넘어감
@@ -889,7 +1151,9 @@ _ABBR = [(re.compile(r"통버"), "통학버스"), (re.compile(r"아캠"), "아�
          (re.compile(r"셔틀(?!버스)"), "셔틀버스"), (re.compile(r"계절(?!학기)"), "계절학기"),
          # 11/21 페르소나 평가: '국장 1차 신청 시작했어?'가 근거없음 ('국장님'·'국장실'은 그대로)
          (re.compile(r"국장(?![님실])"), "국가장학금"), (re.compile(r"근장"), "국가근로장학금"),
-         (re.compile(r"분납"), "분할납부"),
+         (re.compile(r"분납"), "분할납부"), (re.compile(r"학고"), "학사경고"), (re.compile(r"군휴학"), "입대휴학"),
+         (re.compile(r"오피스(?!텔|\s*365)"), "오피스365"),
+         (re.compile(r"유원\s*스타", re.I), "U1 STAR"),
          # 같은 평가: '기말 언제부터'가 근거없음, '선관위 지원 아직 받아?'가 근거없음
          (re.compile(r"기말(?!고사)"), "기말고사"), (re.compile(r"중간(?=\s*(언제|시험|기간))"), "중간고사"),
          (re.compile(r"선관위"), "선거관리위원회")]
@@ -898,7 +1162,18 @@ _ABBR = [(re.compile(r"통버"), "통학버스"), (re.compile(r"아캠"), "아�
 _DISTINCT = [("시내버스", "통학버스", "셔틀버스", "고속버스"), ("국가장학금", "교내장학금"), ("아산", "영동")]
 
 
+def _next_semester(now: datetime) -> str:
+    """지금 다음에 오는 정규학기. 9~2월 → 1학기, 3~8월 → 2학기 ('2027학년도 1학기')"""
+    if now.month >= 9:
+        return f"{now.year + 1}학년도 1학기"
+    return f"{now.year}학년도 1학기" if now.month <= 2 else f"{now.year}학년도 2학기"
+
+
 def _normalize(question: str) -> str:
+    # 11/22: '수강신청 다음 학기 거 언제예요?'에 이미 지난 2학기 수강신청으로 답했다
+    question = re.sub(r"(다음|담)\s*학기", _next_semester(_now()), question)
+    question = re.sub(r"(?<!\d)3월에?\s*(?=복학)", "1학기 ", question)
+    question = re.sub(r"(?<!\d)9월에?\s*(?=복학)", "2학기 ", question)
     for pat, full in _ABBR:
         question = pat.sub(full, question)
     return question
@@ -930,9 +1205,16 @@ def _faq_conflicts(question: str, faq_question: str) -> bool:
     return bool(q_asp and f_asp and not q_asp & f_asp)
 
 
+# 평가할 때 검색에서 뺄 글 (질문의 바탕이 된 Q&A 글을 보고 답하지 않게). 평소에는 비어 있음
+_EXCLUDE: ContextVar[tuple[str, ...]] = ContextVar("exclude", default=())
+
+
 def ask(question: str, category: str | None = None, campus: str | None = None,
-        department: str | None = None) -> dict:
+        department: str | None = None, test: bool = False,
+        exclude: tuple[str, ...] = ()) -> dict:
+    """test=True(평가 스크립트)면 답변 대기에 올리지 않고, 질문 기록에 '평가'로 남긴다."""
     t0 = time.perf_counter()
+    _EXCLUDE.set(tuple(exclude) if test else ())
     question = _normalize(question.strip())
     qvec = index.embed([question])[0]
     result = {"answer_type": "근거없음", "answer": NOT_FOUND_ANSWER, "sources": [], "schedule": None,
@@ -999,7 +1281,8 @@ def ask(question: str, category: str | None = None, campus: str | None = None,
             if table:
                 contexts, used = table
                 tq = _timetable_query(question, contexts[0], now)
-            cal = None if tq else _calendar_answer(question, hits, now)
+            cal = None if tq else (_refund_answer(question, now) or _graduation_answer(question)
+                                   or _calendar_answer(question, hits, now))
             if tq:
                 text = _timetable_answer(tq, contexts[0].split("\n", 1)[0])
                 answered_by = "timetable"
@@ -1015,9 +1298,14 @@ def ask(question: str, category: str | None = None, campus: str | None = None,
             if text and not llm.is_not_found(text):
                 result.update(answer_type="문서", answer=text, sources=_sources_from_chunks(used))
         if result["answer_type"] == "근거없음":
-            register_pending(question, category, campus, qvec)
-            result["pending_registered"] = True
+            if not test:
+                register_pending(question, category, campus, qvec)
+                result["pending_registered"] = True
 
+    if result["answer_type"] == "근거없음" and result["answer"] == NOT_FOUND_ANSWER:
+        result["answer"] = _not_found_with_contact(question)
+    if result["answer_type"] in ("문서", "FAQ"):
+        result["answer"] = _hide_password(result["answer"])
     result["answer"] = readable.tidy(result["answer"])     # 모든 답: 목록 기호 통일, 긴 문단 줄 나눔 (11/21)
     result["elapsed_ms"] = int((time.perf_counter() - t0) * 1000)
     # 답변 피드백(관리 웹 '답변 고치기')과 파인튜닝 데이터에 쓰려고, sLLM이 본 근거와 답을 함께 남긴다.
@@ -1025,9 +1313,9 @@ def ask(question: str, category: str | None = None, campus: str | None = None,
     log_ctx = json.dumps({"by": answered_by, "contexts": contexts if answered_by == "llm" else []}, ensure_ascii=False)
     with db.connect() as con:
         cur = con.execute("INSERT INTO query_log (question, category, campus, answer_type, response_ms, created_at, "
-                          "answer, contexts) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                          "answer, contexts, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                           (db.mask(question)[:200], category, campus, result["answer_type"], result["elapsed_ms"],
-                           db.now(), db.mask(result["answer"])[:2000], log_ctx))
+                           db.now(), db.mask(result["answer"])[:2000], log_ctx, "eval" if test else "user"))
         result["log_id"] = cur.lastrowid
     return result
 

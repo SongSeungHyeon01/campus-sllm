@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}평가 결과{% endblock %}
+{% block main %}
+<h1>평가 결과</h1>
+<p class="sub">학교 Q&amp;A 게시판을 바탕으로 만든 질문에 앱이 어떤 답을 냈는지와 판정입니다. 바탕이 된 글은 검색에서 빼고 물었습니다. 판정이 틀렸으면 바꿀 수 있습니다.</p>
+{% if runs %}
+<form method="get" action="/admin/eval" style="display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap">
+  <select name="run" style="width:220px" aria-label="회차">{% for r in runs %}<option {{ 'selected' if r == run }}>{{ r }}</option>{% endfor %}</select>
+  <select name="verdict" style="width:140px" aria-label="판정"><option value="">모든 판정</option>
+    {% for v in verdicts %}<option {{ 'selected' if v == verdict }}>{{ v }}</option>{% endfor %}</select>
+  <button class="btn primary" type="submit">보기</button>
+</form>
+<div class="cards">{% for v in verdicts %}<div class="card"><div class="k">{{ v }}</div><div class="v">{{ counts.get(v, 0) }}</div></div>{% endfor %}</div>
+<table>
+  <tr><th style="width:26%">질문</th><th>나간 답</th><th style="width:24%">정답 기준</th><th style="width:150px">판정</th></tr>
+  {% for r in rows %}
+  <tr>
+    <td>{{ r.question }}<div class="sub" style="margin:4px 0 0;font-size:13px">{{ r.qid }} · {{ r.campus }} · {{ r.who }}<br>{{ r.topic }}{{ ' · 게시판 글 ' ~ r.src if r.src else ' · 예측 질문' }}</div></td>
+    <td><div style="white-space:pre-wrap">{{ r.answer }}</div>
+      <div class="sub" style="margin:6px 0 0;font-size:13px">{{ r.answer_type }} · {{ '%.1f'|format(r.response_ms / 1000) }}초{% if r.src_list %} · 출처: {{ r.src_list|join(', ') }}{% endif %}</div>
+      {% if r.ctx %}<details style="margin-top:6px"><summary style="cursor:pointer;font-size:13px">모델이 본 근거 {{ r.ctx|length }}개</summary>
+        {% for c in r.ctx %}<div class="notice" style="white-space:pre-wrap;margin:8px 0">{{ c[:700] }}</div>{% endfor %}</details>{% endif %}</td>
+    <td>{{ r.key }}<div class="sub" style="margin:4px 0 0;font-size:13px">{{ r.kind }}</div></td>
+    <td><form method="post" action="/admin/eval/{{ r.eval_id }}">
+        <select name="verdict" aria-label="판정 바꾸기">{% for v in verdicts %}<option {{ 'selected' if v == r.verdict }}>{{ v }}</option>{% endfor %}</select>
+        <button class="btn" type="submit" style="margin-top:6px">저장</button></form>
+      <div class="sub" style="margin:6px 0 0;font-size:13px">{{ r.reason or '' }}</div></td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}<p class="empty">평가 결과가 없습니다.</p>{% endif %}
+{% endblock %}

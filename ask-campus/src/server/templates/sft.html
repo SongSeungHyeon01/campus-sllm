@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}학습 데이터{% endblock %}
+{% block main %}
+<h1>학습 데이터</h1>
+<p class="sub">질문과 모델이 본 근거를 읽고, 답을 고쳐서 승인합니다. 승인한 것만 파인튜닝에 씁니다. 답은 아래 <b>근거에 있는 내용으로만</b> 씁니다. 근거에 답이 없으면 '모른다가 맞음'을 누릅니다.</p>
+<div class="cards">{% for s in ['대기', '승인', '제외'] %}
+  <a class="card" href="/admin/sft?status={{ s }}" style="text-decoration:none;color:inherit;{{ 'border-color:var(--navy)' if s == status }}"><div class="k">{{ s }}</div><div class="v">{{ counts.get(s, 0) }}</div></a>{% endfor %}
+  <div class="card"><div class="k">목표 {{ goal }}개 중</div><div class="v">{{ (counts.get('승인', 0) * 100 / goal)|round|int }}%</div></div>
+  <div class="card"><div class="k">승인 중 '모른다'</div><div class="v">{{ unknown }}</div></div></div>
+{% if status == '대기' %}
+  <p class="row-actions" style="flex-wrap:wrap;margin:14px 0">{% for k, t in [('', '전체'), ('고침', '고친 안 있음'), ('그대로', '초안 그대로 괜찮음'), ('모른다', '모른다 추천'), ('제외', '제외 추천')] %}
+    <a class="btn {{ 'primary' if advice == k else 'ghost' }}" href="/admin/sft?advice={{ k }}">{{ t }} {{ kinds.get(k, 0) if k else counts.get('대기', 0) }}</a>{% endfor %}</p>
+  {% if drops %}
+  <form method="post" action="/admin/sft/drop">
+    <p class="sub">학습에 쓰지 않는 게 낫다고 본 것입니다. 남기고 싶은 것은 체크를 풀고 누르세요. 나중에 '제외'에서 되돌릴 수 있습니다.</p>
+    <table><tr><th style="width:44px"></th><th>질문</th><th style="width:34%">이유</th></tr>
+    {% for x in drops %}<tr><td><input type="checkbox" name="ids" value="{{ x.sft_id }}" checked aria-label="제외"></td><td><a href="/admin/sft?after={{ x.sft_id - 1 }}">{{ x.question }}</a></td><td>{{ x.advice_note }}</td></tr>{% endfor %}</table>
+    <div class="row-actions" style="margin-top:12px"><button class="btn primary" type="submit">체크한 것 모두 제외</button></div>
+  </form>
+  {% elif r %}
+  <form method="post" action="/admin/sft/{{ r.sft_id }}">
+    <input type="hidden" name="advice" value="{{ advice }}">
+    <label>질문</label>
+    <div class="notice" style="margin:0;color:var(--ink)">{{ r.question }}<div class="sub" style="margin:6px 0 0;font-size:13px">{{ r.campus or '-' }} · {{ r.source }} · 물은 때 {{ r.asked_at[:10] }}</div></div>
+    {% if r.advice %}<p style="margin:10px 0 0"><b>추천: {{ {'고침': '고친 안으로 승인', '그대로': '초안 그대로 승인', '모른다': '모른다가 맞음', '제외': '제외'}[r.advice] }}</b>{% if r.advice_note %} · {{ r.advice_note }}{% endif %}</p>{% endif %}
+    {% if r.hint and not r.advice %}<p style="margin:10px 0 0;color:var(--accent)"><b>{{ r.hint }}</b></p>{% endif %}
+    <label>모델이 본 근거 {{ ctx|length }}개</label>
+    {% for c in ctx %}<details {{ 'open' if loop.first }} style="margin-bottom:8px"><summary style="cursor:pointer">{{ c[:60] }}</summary><div class="notice" style="white-space:pre-wrap;margin:6px 0">{{ c }}</div></details>{% endfor %}
+    {% if r.ref %}<label>참고 (학습에는 안 들어감)</label><div class="notice" style="white-space:pre-wrap;margin:0">{{ r.ref }}</div>
+    <p class="sub" style="font-size:13px;margin:4px 0 0">지난 답변이라 지금과 다를 수 있습니다.</p>{% endif %}
+    {% if r.suggested %}<label>모델이 쓴 초안</label><div class="notice" style="white-space:pre-wrap;margin:0">{{ r.draft }}</div>{% endif %}
+    <label for="a">{{ '고친 안 (읽고 확인한 뒤 승인)' if r.suggested else '답 (고쳐서 승인)' }}</label>
+    <textarea id="a" name="answer" maxlength="600" style="min-height:150px">{{ r.suggested or r.answer }}</textarea>
+    <div class="row-actions" style="margin-top:12px;flex-wrap:wrap">
+      <button class="btn primary" name="action" value="approve" type="submit">이 답으로 승인</button>
+      <button class="btn" name="action" value="unknown" type="submit">모른다가 맞음</button>
+      <button class="btn ghost" name="action" value="dismiss" type="submit">제외</button>
+      <a class="btn ghost" href="/admin/sft?after={{ r.sft_id }}&advice={{ advice }}">건너뛰기</a></div>
+  </form>
+  {% else %}<p class="empty">더 확인할 것이 없습니다.{% if after %} <a href="/admin/sft?advice={{ advice }}">건너뛴 것 다시 보기</a>{% endif %}</p>{% endif %}
+{% else %}
+  <table><tr><th style="width:34%">질문</th><th>답</th><th style="width:110px"></th></tr>
+  {% for x in rows %}<tr><td>{{ x.question }}</td><td style="white-space:pre-wrap">{{ x.answer if status == '승인' else '' }}</td>
+    <td><form method="post" action="/admin/sft/{{ x.sft_id }}"><button class="btn" name="action" value="undo" type="submit">되돌리기</button></form></td></tr>
+  {% else %}<tr><td colspan="3">없습니다.</td></tr>{% endfor %}</table>
+{% endif %}
+{% endblock %}

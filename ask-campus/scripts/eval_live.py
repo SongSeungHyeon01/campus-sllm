@@ -70,7 +70,8 @@ def main():
     results = []
     for it in items:
         t0 = time.time()
-        r = post("/api/v1/ask", {"question": it["q"], "campus": it["campus"], "department": it.get("department")})
+        r = post("/api/v1/ask", {"question": it["q"], "campus": it["campus"], "department": it.get("department"),
+                                  "test": True})      # 답변 대기에 올리지 않고 '평가'로 기록
         it_res = {**it, "answer_type": r.get("answer_type"), "answer": r.get("answer"), "log_id": r.get("log_id"),
                   "clarify": bool(r.get("clarify")), "sec": round(time.time() - t0, 1),
                   "sources": [s.get("label") or s.get("title") for s in r.get("sources") or []][:3]}
