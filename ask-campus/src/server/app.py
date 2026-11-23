@@ -16,6 +16,8 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+from urllib.parse import quote
+
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -74,6 +76,8 @@ def reindex(request: Request):
 class AskIn(BaseModel):
     question: str = Field(..., description="질문 (1~200자)")
     category: str | None = None
+    test: bool = Field(False, description="평가 스크립트용. 이 PC에서 보낸 요청만 인정")
+    exclude: list[str] = Field(default_factory=list, description="평가 때 검색에서 뺄 글 주소의 끝부분")
     campus: str | None = None
     interests: list[str] = []
     department: str | None = Field(None, description="학과 (되묻기에서 고른 값). 저장하지 않고 이번 답에만 쓴다")
@@ -124,7 +128,10 @@ def ask(body: AskIn, request: Request):
         return error(400, "INVALID_QUESTION", "질문은 1~200자로 입력해 주세요.")
     if rate_limited(client_ip(request)):
         return error(429, "RATE_LIMITED", "잠시 후 다시 질문해 주세요.")
-    return rag.ask(q, body.category, body.campus, body.department)
+    # 평가 표시는 이 PC에서 직접 보낸 요청만 받는다 (터널로 들어온 요청은 항상 사용자 질문)
+    host = request.client.host if request.client else ""
+    test = body.test and host in ("127.0.0.1", "::1") and "cf-connecting-ip" not in request.headers
+    return rag.ask(q, body.category, body.campus, body.department, test, tuple(body.exclude[:60]))
 
 
 class FeedbackIn(BaseModel):
@@ -206,7 +213,156 @@ def pending_list(request: Request):
                            "ORDER BY question_count DESC, first_asked_at").fetchall()
         stats = con.execute("SELECT COUNT(*) AS n, AVG(response_ms) AS ms FROM query_log "
                             "WHERE substr(created_at, 1, 10) = substr(?, 1, 10)", (db.now(),)).fetchone()
-    return TEMPLATES.TemplateResponse(request, "pending.html", {"rows": rows, "stats": stats, "menu": "pending"})
+        # 그때 나간 답: 같은 질문의 가장 최근 기록 (비슷해서 묶인 질문은 문장이 달라 없을 수 있음)
+        last = {r["pending_id"]: con.execute(
+            "SELECT answer_type, answer, created_at FROM query_log WHERE question = ? ORDER BY log_id DESC LIMIT 1",
+            (r["question"],)).fetchone() for r in rows}
+    return TEMPLATES.TemplateResponse(request, "pending.html", {"rows": rows, "stats": stats, "last": last,
+                                                                "menu": "pending"})
+
+
+SFT_GOAL = 300
+
+
+@app.get("/admin/sft", response_class=HTMLResponse)
+def sft_page(request: Request, status: str = "대기", after: int = 0, advice: str = ""):
+    """학습 데이터: 한 번에 하나씩 질문·근거·답 초안을 보고 고쳐 승인한다. advice로 추천별로 나눠 본다."""
+    need_login(request)
+    with db.connect() as con:
+        counts = {r[0]: r[1] for r in con.execute("SELECT status, COUNT(*) FROM sft_example GROUP BY status")}
+        unknown = con.execute("SELECT COUNT(*) FROM sft_example WHERE status = '승인' AND answer = ?", (llm.NOT_FOUND,)).fetchone()[0]
+        kinds = {r[0]: r[1] for r in con.execute(
+            "SELECT COALESCE(advice, ''), COUNT(*) FROM sft_example WHERE status = '대기' GROUP BY 1")}
+        r = con.execute("SELECT * FROM sft_example WHERE status = '대기' AND sft_id > ? AND (? = '' OR advice = ?) "
+                        "ORDER BY sft_id LIMIT 1", (after, advice, advice)).fetchone()
+        drops = con.execute("SELECT sft_id, question, advice_note FROM sft_example WHERE status = '대기' AND advice = '제외' "
+                            "ORDER BY sft_id").fetchall() if status == "대기" and advice == "제외" else []
+        rows = [] if status == "대기" else con.execute(
+            "SELECT * FROM sft_example WHERE status = ? ORDER BY handled_at DESC LIMIT 300", (status,)).fetchall()
+    return TEMPLATES.TemplateResponse(request, "sft.html", {
+        "r": r, "ctx": json.loads(r["contexts"]) if r else [], "rows": rows, "counts": counts, "status": status,
+        "after": after, "advice": advice, "kinds": kinds, "drops": drops, "goal": SFT_GOAL, "unknown": unknown, "menu": "sft"})
+
+
+@app.post("/admin/sft/drop")
+def sft_drop(request: Request, ids: list[int] = Form([])):
+    """'제외 추천' 목록에서 체크한 것만 한꺼번에 제외한다."""
+    need_login(request)
+    with db.connect() as con:
+        con.executemany("UPDATE sft_example SET status = '제외', handled_at = ? WHERE sft_id = ? AND status = '대기' AND advice = '제외'",
+                        [(db.now(), i) for i in ids])
+    return RedirectResponse("/admin/sft", status_code=303)
+
+
+@app.post("/admin/sft/{sid}")
+def sft_save(request: Request, sid: int, action: str = Form(...), answer: str = Form(""), advice: str = Form("")):
+    need_login(request)
+    more = f"&advice={quote(advice)}" if advice else ""
+    answer = answer.replace("\r\n", "\n").strip()
+    if action not in ("approve", "unknown", "dismiss", "undo") or (action == "approve" and not answer):
+        return RedirectResponse(f"/admin/sft?after={max(0, sid - 1)}{more}", status_code=303)
+    with db.connect() as con:
+        if action == "undo":
+            con.execute("UPDATE sft_example SET status = '대기', handled_at = NULL WHERE sft_id = ?", (sid,))
+        elif action == "dismiss":
+            con.execute("UPDATE sft_example SET status = '제외', handled_at = ? WHERE sft_id = ? AND status = '대기'", (db.now(), sid))
+        else:
+            con.execute("UPDATE sft_example SET status = '승인', answer = ?, handled_at = ? WHERE sft_id = ? AND status = '대기'",
+                        (llm.NOT_FOUND if action == "unknown" else answer[:600], db.now(), sid))
+    return RedirectResponse("/admin/sft" if action == "undo" else f"/admin/sft?after={sid}{more}", status_code=303)
+
+
+@app.get("/admin/candidates", response_class=HTMLResponse)
+def candidates(request: Request, status: str = "대기"):
+    """FAQ 후보: 초안을 관리자가 확인해 승인해야 학생 답변에 쓰인다."""
+    need_login(request)
+    with db.connect() as con:
+        path = config.ROOT / "eval" / "faq_candidates.json"
+        for x in json.loads(path.read_text(encoding="utf-8")) if path.exists() else []:
+            con.execute("INSERT OR IGNORE INTO faq_candidate (question, answer, basis, todo) VALUES (?, ?, ?, ?)",
+                        (x["q"], x["a"], x["basis"], x["check"]))
+        rows = con.execute("SELECT * FROM faq_candidate WHERE status = ? ORDER BY cand_id", (status,)).fetchall()
+        counts = {r[0]: r[1] for r in con.execute("SELECT status, COUNT(*) FROM faq_candidate GROUP BY status")}
+    return TEMPLATES.TemplateResponse(request, "candidates.html", {"rows": rows, "counts": counts, "status": status,
+                                                                   "menu": "candidates"})
+
+
+@app.post("/admin/candidates/{cid}")
+def candidate_save(request: Request, cid: int, action: str = Form(...), question: str = Form(...), answer: str = Form("")):
+    need_login(request)
+    question, answer = question.strip()[:100], answer.strip()
+    with db.connect() as con:
+        row = con.execute("SELECT status FROM faq_candidate WHERE cand_id = ?", (cid,)).fetchone()
+    if row is None or row["status"] != "대기" or action not in ("approve", "save", "dismiss"):
+        return RedirectResponse("/admin/candidates", status_code=303)
+    if action == "approve" and not (question and answer):
+        return RedirectResponse("/admin/candidates", status_code=303)
+    status = {"approve": "승인", "save": "대기", "dismiss": "제외"}[action]
+    with db.connect() as con:        # 질문은 후보 파일과 맞춰 두려고 바꾸지 않고, 승인할 때 고친 질문으로 FAQ를 만든다
+        con.execute("UPDATE faq_candidate SET answer = ?, status = ?, handled_at = ? WHERE cand_id = ?",
+                    (answer, status, db.now(), cid))
+    if action == "approve":
+        pid = rag.register_pending(question, "학사정보", None, index.embed([question])[0])
+        rag.add_faq(pid, question, answer, "학사정보", None)
+    return RedirectResponse("/admin/candidates", status_code=303)
+
+
+VERDICTS = ("맞음", "부분", "틀림", "미채점")
+
+
+@app.get("/admin/eval", response_class=HTMLResponse)
+def eval_results(request: Request, run: str = "", verdict: str = ""):
+    """평가 결과: 질문마다 나간 답, 모델이 본 근거, 정답 기준, 판정."""
+    need_login(request)
+    with db.connect() as con:
+        runs = [r[0] for r in con.execute("SELECT run FROM eval_result GROUP BY run ORDER BY MAX(eval_id) DESC")]
+        run = run if run in runs else (runs[0] if runs else "")
+        rows = [dict(r) for r in con.execute("SELECT * FROM eval_result WHERE run = ? ORDER BY qid", (run,))]
+    counts = {v: sum(r["verdict"] == v for r in rows) for v in VERDICTS}
+    rows = [r for r in rows if not verdict or r["verdict"] == verdict]
+    for r in rows:
+        r["ctx"] = json.loads(r["contexts"] or "{}").get("contexts", [])
+        r["src_list"] = json.loads(r["sources"] or "[]")
+    return TEMPLATES.TemplateResponse(request, "eval.html", {"rows": rows, "runs": runs, "run": run, "counts": counts,
+                                                             "verdict": verdict, "verdicts": VERDICTS, "menu": "eval"})
+
+
+@app.post("/admin/eval/{eid}")
+def eval_verdict(request: Request, eid: int, verdict: str = Form(...)):
+    need_login(request)
+    if verdict not in VERDICTS:
+        raise HTTPException(400)
+    with db.connect() as con:
+        row = con.execute("SELECT run FROM eval_result WHERE eval_id = ?", (eid,)).fetchone()
+        con.execute("UPDATE eval_result SET verdict = ? WHERE eval_id = ?", (verdict, eid))
+    return RedirectResponse("/admin/eval?run=" + quote(row["run"] if row else ""), status_code=303)
+
+
+LOG_PAGE = 50
+
+
+@app.get("/admin/logs", response_class=HTMLResponse)
+def question_logs(request: Request, source: str = "user", kind: str = "", q: str = "", page: int = 1):
+    """질문 기록: 어떤 질문에 어떤 답이 나갔는지."""
+    need_login(request)
+    source = source if source in ("user", "eval") else "user"
+    page = min(max(1, page), 100000)
+    cond, args = "source = ?", [source]
+    if kind:
+        cond, args = cond + " AND answer_type = ?", args + [kind]
+    if q.strip():
+        word = q.strip()[:50].lower()
+        cond, args = cond + " AND (instr(lower(question), ?) OR instr(lower(answer), ?))", args + [word, word]
+    with db.connect() as con:
+        total = con.execute(f"SELECT COUNT(*) FROM query_log WHERE {cond}", args).fetchone()[0]
+        rows = con.execute(f"SELECT log_id, question, campus, answer_type, answer, response_ms, created_at FROM query_log "
+                           f"WHERE {cond} ORDER BY log_id DESC LIMIT ? OFFSET ?",
+                           (*args, LOG_PAGE, (page - 1) * LOG_PAGE)).fetchall()
+        kinds = [r[0] for r in con.execute("SELECT DISTINCT answer_type FROM query_log ORDER BY answer_type")]
+        counts = {r[0]: r[1] for r in con.execute("SELECT source, COUNT(*) FROM query_log GROUP BY source")}
+    return TEMPLATES.TemplateResponse(request, "logs.html", {
+        "rows": rows, "total": total, "page": page, "pages": max(1, -(-total // LOG_PAGE)), "kinds": kinds,
+        "counts": counts, "source": source, "kind": kind, "q": q, "menu": "logs"})
 
 
 @app.get("/admin/pending/{pid}", response_class=HTMLResponse)

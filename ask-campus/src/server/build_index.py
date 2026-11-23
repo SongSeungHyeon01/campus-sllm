@@ -8,8 +8,33 @@
 - 다시 실행하면 청크를 새로 넣는다 (FAQ·답변 대기는 그대로 둠).
 """
 import json
+import re
 
 from . import config, db, index
+
+# 한 학생에게만 맞거나 때가 지난 Q&A 답은 색인에 넣지 않는다 (원본 jsonl에는 그대로 있음).
+# 11/22 평가: '국장 언제 들어와요?'에 다른 학생의 지급일을, '복학 신청 기간'에 2023년 날짜를 올해 것처럼 답했다.
+_PERSONAL = re.compile(
+    r"유선|전화(로)?\s*(안내|답변|상담)|조회\s*결과|확인\s*결과|(문의하신|해당|현재)\s*학생(은|의|이)|○○○\s*학생|학생의\s*경우"
+    r"|(지급|입금)\s*(될\s*)?(예정|되었|완료|해드렸)|금일|금주|(다음|이번)\s*주|확인해\s*보겠|아직\s*올라가지"
+    r"|20\d{2}\s*[.\-년]|(?<!\d)\d{1,2}월\s*\d{1,2}일|(?<!\d)\d{1,2}/\d{1,2}(?!\d)|\d{1,2}\.\s?\d{1,2}\(|어학연수|취소되었")
+
+
+def drop_personal_qna(rows: list[dict]) -> list[dict]:
+    answers: dict[str, str] = {}
+    for r in rows:
+        if r["category"] == "Q&A":
+            answers[r["source_url"]] = answers.get(r["source_url"], "") + "\n" + r["content"]
+    bad = {u for u, t in answers.items() if _PERSONAL.search(t.split("학교 답변:", 1)[-1])}
+    return [r for r in rows if not (r["category"] == "Q&A" and r["source_url"] in bad)]
+
+
+# 학생이 자기 서류를 내거나 사정을 적은 글 (복학신청서류접수 게시판, 총장에게 쓴 편지). 안내가 아니라서 넣지 않는다.
+_STUDENT_PAPER = re.compile(r"/reinstatement\.do\?.*articleNo=")
+
+
+def drop_student_papers(rows: list[dict]) -> list[dict]:
+    return [r for r in rows if not (_STUDENT_PAPER.search(r["source_url"] or "") or "총장님께" in r["content"])]
 
 
 def load_rows() -> list[dict]:
@@ -17,7 +42,8 @@ def load_rows() -> list[dict]:
     for path in (config.CHUNKS_JSONL, config.CHUNKS_LOGIN_JSONL, config.CHUNKS_SITE_JSONL):
         if path.exists():
             rows += [json.loads(line) for line in path.open(encoding="utf-8") if line.strip()]
-    return list({r["chunk_id"]: r for r in rows}.values())   # 같은 글이 두 번 수집된 경우 하나만
+    rows = drop_student_papers(rows)
+    return drop_personal_qna(list({r["chunk_id"]: r for r in rows}.values()))   # 같은 글이 두 번 수집된 경우 하나만
 
 
 def main() -> int:

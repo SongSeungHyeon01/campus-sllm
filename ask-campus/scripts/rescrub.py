@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from src.ingest.login_sources import mask  # noqa: E402
+from src.ingest.people import scrub_corpus  # noqa: E402
 from src.ingest.site_sources import STUDENT_BOARDS, scrub_names  # noqa: E402
 
 FILES = ["chunks.jsonl", "chunks_login.jsonl", "chunks_site.jsonl"]
@@ -22,6 +23,7 @@ FILES = ["chunks.jsonl", "chunks_login.jsonl", "chunks_site.jsonl"]
 
 def main():
     total = 0
+    corpus: dict[str, list[dict]] = {}
     for name in FILES:
         path = ROOT / "data" / name
         if not path.exists():
@@ -36,9 +38,15 @@ def main():
                 if after != before:
                     r[key] = after
                     changed += 1
-        path.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8")
+        corpus[name] = rows
         print(f"{name}: {len(rows)}개 중 {changed}칸 가림")
         total += changed
+    # 자료 전체를 봐야 알 수 있는 이름과 비밀번호 규칙 (people.py)
+    print(f"자료 전체 기준으로 {scrub_corpus([r for rows in corpus.values() for r in rows])}개 조각 정리")
+    for name, rows in corpus.items():
+        tmp = ROOT / "data" / (name + ".tmp")
+        tmp.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8")
+        tmp.replace(ROOT / "data" / name)
     print(f"합계 {total}칸")
 
 

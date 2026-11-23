@@ -10,10 +10,14 @@
 </div>
 {% if rows %}
 <table>
-  <tr><th>질문</th><th style="width:90px">같은 질문</th><th style="width:110px">카테고리</th><th style="width:120px">처음 들어온 날</th><th style="width:200px">처리</th></tr>
+  <tr><th>질문</th><th>나간 답 (최근)</th><th style="width:90px">같은 질문</th><th style="width:110px">카테고리</th><th style="width:120px">처음 들어온 날</th><th style="width:200px">처리</th></tr>
   {% for r in rows %}
   <tr>
     <td>{{ r.question }}</td>
+    {% set a = last[r.pending_id] %}
+    <td>{% if a and a.answer %}<div style="white-space:pre-wrap">{{ a.answer[:160] }}{{ '…' if a.answer|length > 160 }}</div>
+      <div class="sub" style="margin:4px 0 0;font-size:13px">{{ a.answer_type }} · {{ a.created_at[5:16]|replace('T', ' ') }}</div>
+      {% else %}<span class="sub">기록 없음</span>{% endif %}</td>
     <td>{{ r.question_count }}건</td>
     <td>{{ r.category or '-' }}</td>
     <td>{{ r.first_asked_at[:10] }}</td>

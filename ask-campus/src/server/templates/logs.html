@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}질문 기록{% endblock %}
+{% block main %}
+<h1>질문 기록</h1>
+<p class="sub">어떤 질문에 어떤 답이 나갔는지 최근 순으로 보여 줍니다. 평가 스크립트가 보낸 질문은 따로 모읍니다.</p>
+<div class="cards">
+  {% for s, label in [('user', '사용자 질문'), ('eval', '평가 질문')] %}
+  <a class="card" href="/admin/logs?source={{ s }}" style="text-decoration:none;color:inherit;{{ 'border-color:var(--navy)' if s == source }}">
+    <div class="k">{{ label }}</div><div class="v">{{ counts.get(s, 0) }}건</div>
+  </a>
+  {% endfor %}
+</div>
+<form method="get" action="/admin/logs" style="display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap">
+  <input type="hidden" name="source" value="{{ source }}">
+  <select name="kind" style="width:150px" aria-label="답변 유형">
+    <option value="">모든 유형</option>
+    {% for k in kinds %}<option value="{{ k }}" {{ 'selected' if k == kind }}>{{ k }}</option>{% endfor %}
+  </select>
+  <input type="text" name="q" value="{{ q }}" maxlength="50" placeholder="질문·답변에서 찾기" style="flex:1;min-width:180px">
+  <button class="btn primary" type="submit">찾기</button>
+</form>
+{% if rows %}
+<table>
+  <tr><th style="width:34%">질문</th><th>나간 답</th><th style="width:100px">시각</th></tr>
+  {% for r in rows %}
+  <tr>
+    <td>{{ r.question }}<div class="sub" style="margin:4px 0 0;font-size:13px">{{ r.campus or '-' }} · {{ r.answer_type }} · {{ '%.1f'|format(r.response_ms / 1000) }}초</div></td>
+    <td>{% if not r.answer %}<span class="sub">답을 저장하기 전 기록</span>
+      {% elif r.answer|length > 160 %}<details><summary style="cursor:pointer">{{ r.answer[:160] }}…</summary><div style="white-space:pre-wrap;margin-top:8px">{{ r.answer }}</div></details>
+      {% else %}<div style="white-space:pre-wrap">{{ r.answer }}</div>{% endif %}</td>
+    <td>{{ r.created_at[5:16]|replace('T', ' ') }}</td>
+  </tr>
+  {% endfor %}
+</table>
+<p style="margin-top:18px">
+  {% if page > 1 %}<a class="btn" href="/admin/logs?source={{ source }}&kind={{ kind|urlencode }}&q={{ q|urlencode }}&page={{ page - 1 }}">이전</a>{% endif %}
+  {{ page }} / {{ pages }}쪽 (모두 {{ total }}건)
+  {% if page < pages %}<a class="btn" href="/admin/logs?source={{ source }}&kind={{ kind|urlencode }}&q={{ q|urlencode }}&page={{ page + 1 }}">다음</a>{% endif %}
+</p>
+{% else %}<p class="empty">기록이 없습니다.</p>{% endif %}
+{% endblock %}

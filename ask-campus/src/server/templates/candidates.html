@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}FAQ 후보{% endblock %}
+{% block main %}
+<h1>FAQ 후보</h1>
+<p class="sub">학교 Q&amp;A에서 자주 나온 주제의 답변 초안입니다. 승인해야 학생 답변에 쓰입니다. 근거와 확인할 점을 보고 고친 뒤 승인해 주세요.</p>
+<div class="cards">{% for s in ['대기', '승인', '제외'] %}
+  <a class="card" href="/admin/candidates?status={{ s }}" style="text-decoration:none;color:inherit;{{ 'border-color:var(--navy)' if s == status }}"><div class="k">{{ s }}</div><div class="v">{{ counts.get(s, 0) }}</div></a>{% endfor %}</div>
+{% for r in rows %}
+<form method="post" action="/admin/candidates/{{ r.cand_id }}" style="border-bottom:1px solid var(--line);padding:0 0 18px;margin-bottom:18px">
+  <label for="q{{ r.cand_id }}">질문</label>
+  <input id="q{{ r.cand_id }}" type="text" name="question" maxlength="100" value="{{ r.question }}" {{ 'readonly' if status != '대기' }}>
+  <label for="a{{ r.cand_id }}">답변</label>
+  <textarea id="a{{ r.cand_id }}" name="answer" style="min-height:84px" placeholder="초안이 없습니다. 확인한 답을 적어 주세요." {{ 'readonly' if status != '대기' }}>{{ r.answer }}</textarea>
+  <div class="sub" style="margin:6px 0 10px;font-size:13px">근거: {{ r.basis }}{% if r.todo %}<br><b>확인할 점: {{ r.todo }}</b>{% endif %}</div>
+  {% if status == '대기' %}<div class="row-actions">
+    <button class="btn primary" name="action" value="approve" type="submit">확인했고 승인</button>
+    <button class="btn" name="action" value="save" type="submit">저장만</button>
+    <button class="btn ghost" name="action" value="dismiss" type="submit">제외</button></div>{% endif %}
+</form>
+{% else %}<p class="empty">'{{ status }}' 상태의 후보가 없습니다.</p>{% endfor %}
+{% endblock %}

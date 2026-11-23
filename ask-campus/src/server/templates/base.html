@@ -46,6 +46,10 @@
   <nav>
     <div class="brand">물어봐 캠퍼스<br>답변·운영 관리</div>
     <a href="/admin" class="{{ 'on' if menu == 'pending' }}">답변 대기</a>
+    <a href="/admin/logs" class="{{ 'on' if menu == 'logs' }}">질문 기록</a>
+    <a href="/admin/eval" class="{{ 'on' if menu == 'eval' }}">평가 결과</a>
+    <a href="/admin/sft" class="{{ 'on' if menu == 'sft' }}">학습 데이터</a>
+    <a href="/admin/candidates" class="{{ 'on' if menu == 'candidates' }}">FAQ 후보</a>
     <a href="/admin/faqs" class="{{ 'on' if menu == 'faqs' }}">FAQ 관리</a>
     <a href="/admin/feedback" class="{{ 'on' if menu == 'feedback' }}">답변 피드백</a>
     <form method="post" action="/admin/logout"><button class="btn ghost" type="submit">로그아웃</button></form>

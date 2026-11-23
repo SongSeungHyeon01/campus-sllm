@@ -39,11 +39,13 @@ def collection(name: str):
     return _client().get_or_create_collection(name, metadata={"hnsw:space": "cosine"})
 
 
-def search(name: str, query_vec: list[float], k: int, where: dict | None = None) -> list[dict]:
+def search(name: str, query_vec: list[float], k: int, where: dict | None = None,
+           contains: str | None = None) -> list[dict]:
     col = collection(name)
     if col.count() == 0:
         return []
-    res = col.query(query_embeddings=[query_vec], n_results=min(k, col.count()), where=where)
+    res = col.query(query_embeddings=[query_vec], n_results=min(k, col.count()), where=where,
+                    where_document={"$contains": contains} if contains else None)
     hits = []
     for i, doc_id in enumerate(res["ids"][0]):
         hits.append({"id": doc_id, "score": 1 - res["distances"][0][i],
