@@ -2,84 +2,288 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>물어봐 캠퍼스</title>
-<!-- 시험용 웹 채팅 (SCR-001 대용). 정식 UI는 Figma 설계 뒤 앱에서 만든다. 같은 POST /api/v1/ask를 쓴다 -->
+<!-- 학생 웹 채팅 (SCR-001). Figma '물어봐 캠퍼스 UI' 학생 채팅 시안 00~09를 따른다 (문서/보고서/개발문서/UI디자인_인수인계서.md).
+     같은 POST /api/v1/ask, /api/v1/feedback을 쓴다. 학교 로고는 사용 허가 전이라 넣지 않는다. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
-  :root { --navy:#1f3a5f; --ink:#22262e; --muted:#5f6773; --line:#d5dbe3; --tint:#f3f5f8; }
+  /* Figma 변수 컬렉션 "Color"와 이름을 맞춘다 */
+  :root {
+    --bg-lavender:#EFF3FE; --bg-surface:#FFFFFF; --bg-callout:#E5EDFF;
+    --primary:#2F5BD3; --primary-soft:#C9D8FF;
+    --text-ink:#1A1D26; --text-muted:#687083; --text-on-primary:#FFFFFF; --line:#E1E6F0;
+  }
   * { box-sizing:border-box; }
-  body { margin:0; font-family:"Malgun Gothic",system-ui,sans-serif; color:var(--ink); background:#fff; font-size:15px; }
-  .wrap { max-width:760px; margin:0 auto; height:100vh; display:flex; flex-direction:column; }
-  header { display:flex; align-items:center; justify-content:space-between; padding:14px 16px; border-bottom:1px solid var(--line); }
-  header b { color:var(--navy); font-size:18px; }
-  select { font:inherit; padding:6px 8px; border:1px solid var(--line); border-radius:8px; }
-  #log { flex:1; overflow-y:auto; padding:16px; }
-  .msg { max-width:85%; margin:0 0 12px; padding:10px 14px; border-radius:14px; line-height:1.55; white-space:pre-wrap; word-break:keep-all; }
-  .me { margin-left:auto; background:var(--navy); color:#fff; border-bottom-right-radius:4px; }
-  .bot { background:var(--tint); border-bottom-left-radius:4px; }
-  .meta { font-size:12px; color:var(--muted); margin-top:6px; white-space:normal; }
-  .meta a { color:var(--navy); }
-  .fb { margin-top:8px; display:flex; gap:6px; align-items:center; font-size:13px; color:var(--muted); white-space:normal; }
-  .fb-btn { font:inherit; font-size:12px; padding:3px 10px; border:1px solid var(--line); border-radius:12px;
-            background:#fff; color:var(--muted); cursor:pointer; }
-  .fb-in { flex:1; font:inherit; font-size:13px; padding:5px 8px; border:1px solid var(--line); border-radius:8px; }
-  /* 답 본문: 줄마다 나눠 보여 준다. '· ' 줄은 들여쓰기, 여러 줄 답의 첫 줄(핵심)은 굵게 (11/21 가독성) */
-  .ans .lead { font-weight:600; margin-bottom:2px; }
-  .ans .li { position:relative; padding-left:14px; }
-  .ans .li::before { content:"·"; position:absolute; left:3px; font-weight:700; color:var(--navy); }
+  html, body { height:100%; }
+  body { margin:0; font-family:"Noto Sans KR","Malgun Gothic",system-ui,sans-serif; color:var(--text-ink);
+         background:var(--bg-lavender); font-size:16px; -webkit-font-smoothing:antialiased; }
+  button, input, textarea, select { font:inherit; color:inherit; }
+  .app { max-width:480px; margin:0 auto; height:100vh; height:100dvh; display:flex; flex-direction:column;
+         background:var(--bg-lavender); position:relative; overflow:hidden; }
+  @media (min-width:560px) {
+    body { background:#DCE3F5; }
+    .app { height:min(844px, calc(100vh - 48px)); max-width:390px; margin:24px auto; border-radius:32px;
+           box-shadow:0 12px 40px rgba(26,29,38,.16); }
+  }
+  [hidden] { display:none !important; }
+
+  /* 00 시작 화면 */
+  .splash { position:absolute; inset:0; z-index:30; background:var(--bg-lavender); display:flex; flex-direction:column;
+            align-items:center; justify-content:center; gap:28px; transition:opacity .35s; }
+  .splash img { width:56%; max-width:240px; }
+  .splash h1 { margin:0; color:var(--primary); font-size:34px; font-weight:700; letter-spacing:-.5px; }
+  .splash.out { opacity:0; pointer-events:none; }
+
+  /* 01 캠퍼스 선택 (첫 실행) */
+  .onboard { position:absolute; inset:0; z-index:20; background:var(--bg-lavender); display:flex; flex-direction:column;
+             padding:56px 24px 24px; }
+  .onboard h2 { margin:0 0 14px; font-size:28px; line-height:1.35; font-weight:700; }
+  .onboard p { margin:0 0 36px; color:var(--text-muted); font-size:15px; line-height:1.6; }
+  .campus-card { display:flex; align-items:center; justify-content:space-between; width:100%; text-align:left;
+                 background:var(--bg-surface); border:1.5px solid var(--line); border-radius:20px; padding:22px 24px;
+                 margin-bottom:14px; cursor:pointer; }
+  .campus-card b { display:block; font-size:18px; margin-bottom:4px; }
+  .campus-card span { color:var(--text-muted); font-size:14px; }
+  .campus-card .radio { width:28px; height:28px; border-radius:50%; border:2px solid var(--line); flex:none;
+                        display:grid; place-items:center; }
+  .campus-card[aria-checked="true"] { border:2px solid var(--primary); }
+  .campus-card[aria-checked="true"] .radio { background:var(--primary); border-color:var(--primary); }
+  .campus-card[aria-checked="true"] .radio::after { content:""; width:10px; height:6px; border:2.5px solid #fff;
+                 border-top:0; border-right:0; transform:translateY(-1px) rotate(-45deg); }
+  .onboard .spacer { flex:1; }
+  .btn-primary { width:100%; border:0; border-radius:16px; background:var(--primary); color:var(--text-on-primary);
+                 font-size:17px; font-weight:700; padding:17px; cursor:pointer; }
+  .btn-primary:disabled { opacity:.5; cursor:default; }
+
+  /* ChatHeader(campus) */
+  header { display:flex; align-items:center; justify-content:space-between; padding:20px 20px 12px; }
+  header .title { font-weight:700; font-size:21px; letter-spacing:-.3px; }
+  .campus-pill { position:relative; }
+  .campus-pill select { appearance:none; -webkit-appearance:none; border:0; border-radius:999px; background:var(--bg-surface);
+                        color:var(--primary); font-size:15px; font-weight:500; padding:8px 34px 8px 16px; cursor:pointer; }
+  .campus-pill::after { content:""; position:absolute; right:15px; top:50%; width:7px; height:7px; margin-top:-6px;
+                        border:2px solid var(--primary); border-top:0; border-left:0; transform:rotate(45deg); pointer-events:none; }
+
+  #log { flex:1; overflow-y:auto; padding:8px 20px 20px; }
+
+  /* 02 첫 화면 */
+  .home h2 { margin:32px 0 10px; font-size:30px; font-weight:700; letter-spacing:-.5px; }
+  .home .lead { margin:0 0 26px; color:var(--text-muted); font-size:16px; line-height:1.6; }
+  .home .label { color:var(--text-muted); font-size:14px; font-weight:500; margin-bottom:12px; }
+  .chips { display:flex; flex-wrap:wrap; gap:10px; }
+  .chip { border:1px solid var(--line); border-radius:999px; background:var(--bg-surface); color:var(--primary);
+          font-size:16px; font-weight:500; padding:10px 20px; cursor:pointer; }
+  .chip:hover { border-color:var(--primary-soft); }
+  .chip.on { background:var(--primary); border-color:var(--primary); color:var(--text-on-primary); }
+  .chip:disabled:not(.on) { opacity:.45; cursor:default; }
+  .callout { background:var(--bg-callout); color:var(--primary); border-radius:16px; padding:16px 20px;
+             font-size:15px; line-height:1.6; margin-top:22px; }
+
+  /* 말풍선 */
+  .row { display:flex; gap:12px; align-items:flex-start; margin:0 0 20px; }
+  .row.me { justify-content:flex-end; }
+  .me .msg { max-width:80%; background:var(--primary); color:var(--text-on-primary); padding:12px 20px;
+             border-radius:22px 22px 6px 22px; font-size:17px; line-height:1.5; white-space:pre-wrap; word-break:keep-all; }
+  /* BotAvatar */
+  .avatar { flex:none; width:44px; height:44px; border-radius:14px; background:var(--primary); display:grid; place-items:center; }
+  .bot .msg { flex:1; min-width:0; background:var(--bg-surface); border-radius:22px; padding:20px 22px; line-height:1.6;
+              word-break:keep-all; }
+  .note { color:var(--text-muted); font-size:14px; line-height:1.7; margin:-6px 0 20px 8px; }
+
+  /* 03 답을 찾는 중 */
+  .loading { display:flex; align-items:center; gap:12px; color:var(--text-muted); font-weight:700; font-size:16px; }
+  .dots { display:inline-flex; gap:6px; }
+  .dots i { width:9px; height:9px; border-radius:50%; background:var(--primary-soft); animation:blink 1.2s infinite; }
+  .dots i:nth-child(2) { animation-delay:.2s; } .dots i:nth-child(3) { animation-delay:.4s; }
+  @keyframes blink { 0%,80%,100% { background:var(--primary-soft); } 40% { background:var(--primary); } }
+  .loading-sub { color:var(--text-muted); font-size:14px; margin-top:12px; }
+
+  /* 04 답변: 첫 줄은 굵게, '· ' 줄은 파란 점 목록 */
+  .ans { font-size:16px; }
+  .ans .head { font-weight:700; font-size:17px; margin-bottom:6px; }
+  .ans .muted { color:var(--text-muted); }
+  .ans .li { position:relative; padding-left:20px; margin:8px 0; }
+  .ans .li::before { content:""; position:absolute; left:2px; top:.62em; width:7px; height:7px; border-radius:50%; background:var(--primary); }
   .ans .gap { height:8px; }
-  .ans .sub { font-weight:600; margin-top:6px; }
-  .choices { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; white-space:normal; }
-  .choice { font:inherit; font-size:14px; padding:6px 12px; border:1px solid var(--line); border-radius:16px;
-            background:#fff; color:var(--navy); cursor:pointer; }
-  .choice:disabled { opacity:.5; cursor:default; }
-  form { display:flex; gap:8px; padding:12px 16px; border-top:1px solid var(--line); }
-  #q { flex:1; font:inherit; padding:12px 14px; border:1px solid var(--line); border-radius:12px; }
-  button { font:inherit; padding:0 18px; border:0; border-radius:12px; background:var(--navy); color:#fff; cursor:pointer; }
-  button:disabled { opacity:.5; cursor:default; }
+  .ans .sub { font-weight:700; margin-top:8px; }
+  .src { display:block; background:var(--bg-lavender); border-radius:16px; padding:16px 20px; margin-top:16px; }
+  .src .top { display:flex; align-items:center; gap:10px; margin-bottom:6px; }
+  .tag { flex:none; background:var(--primary-soft); color:var(--primary); font-size:13px; font-weight:700;
+         border-radius:8px; padding:3px 9px; }
+  .src .t { font-weight:700; font-size:16px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .src .m { color:var(--text-muted); font-size:14px; overflow-wrap:anywhere; }
+  .src a { display:inline-block; margin-top:8px; color:var(--primary); font-weight:700; text-decoration:none; }
+  .src a::after { content:""; display:inline-block; width:7px; height:7px; margin-left:8px; border:2px solid var(--primary);
+                  border-left:0; border-bottom:0; transform:rotate(45deg); vertical-align:2px; }
+  .fb-row { display:flex; justify-content:flex-end; margin-top:16px; }
+  .fb-btn { border:1px solid var(--line); border-radius:999px; background:var(--bg-surface); color:var(--text-muted);
+            font-size:15px; padding:9px 18px; cursor:pointer; }
+  .sent { display:flex; align-items:center; gap:8px; color:var(--primary); font-size:15px; font-weight:500; margin-top:12px; }
+  .sent .ok { width:22px; height:22px; border-radius:50%; background:var(--primary); display:grid; place-items:center; flex:none; }
+  .sent .ok::after { content:""; width:8px; height:4px; border:2px solid #fff; border-top:0; border-right:0;
+                     transform:translateY(-1px) rotate(-45deg); }
+
+  /* 05·06 되묻기 */
+  .ask-q { font-weight:700; font-size:17px; margin-bottom:14px; }
+  .hint { color:var(--text-muted); font-size:14px; margin-top:14px; }
+
+  /* 07 찾지 못했을 때 */
+  .dept { background:var(--bg-lavender); border-radius:16px; padding:16px 20px; margin-top:16px; }
+  .dept small { display:block; color:var(--primary); font-weight:700; font-size:14px; margin-bottom:6px; }
+  .dept b { font-size:17px; }
+  .dept .m { color:var(--text-muted); font-size:15px; margin-top:4px; }
+
+  /* InputBar(placeholder) */
+  form.input { display:flex; gap:12px; align-items:center; padding:16px 20px calc(16px + env(safe-area-inset-bottom));
+               background:var(--bg-surface); border-top:1px solid var(--line); }
+  #q { flex:1; min-width:0; border:0; outline:0; background:var(--bg-lavender); border-radius:999px; padding:16px 22px;
+       font-size:17px; }
+  #q::placeholder { color:var(--text-muted); }
+  .send { flex:none; width:56px; height:56px; border-radius:50%; border:0; background:var(--primary); display:grid;
+          place-items:center; cursor:pointer; }
+  .send:disabled { opacity:.5; cursor:default; }
+
+  /* 08 의견 시트 */
+  .dim { position:absolute; inset:0; z-index:10; background:rgba(26,29,38,.38); display:none; align-items:flex-end; }
+  .dim.open { display:flex; }
+  .sheet { width:100%; background:var(--bg-surface); border-radius:28px 28px 0 0; padding:14px 24px calc(24px + env(safe-area-inset-bottom)); }
+  .sheet .handle { width:48px; height:5px; border-radius:3px; background:var(--line); margin:0 auto 22px; }
+  .sheet h3 { margin:0 0 12px; font-size:24px; font-weight:700; }
+  .sheet p { margin:0 0 22px; color:var(--text-muted); font-size:15px; line-height:1.6; }
+  .sheet textarea { width:100%; height:150px; border:0; outline:0; background:var(--bg-lavender); border-radius:16px;
+                    padding:16px 20px; font-size:16px; resize:none; }
+  .sheet textarea::placeholder { color:var(--text-muted); }
+  .sheet .count { text-align:right; color:var(--text-muted); font-size:14px; margin:12px 0 18px; }
 </style>
 </head>
 <body>
-<div class="wrap">
+<div class="app">
+  <!-- 00 시작 화면 -->
+  <div class="splash" id="splash">
+    <img src="data:image/webp;base64,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" alt="">
+    <h1>물어봐 캠퍼스</h1>
+  </div>
+
+  <!-- 01 캠퍼스 선택 (첫 실행) -->
+  <div class="onboard" id="onboard" hidden>
+    <h2>어느 캠퍼스에<br>다니세요?</h2>
+    <p>캠퍼스마다 통학버스와 공지가 달라서 먼저 골라 주세요.<br>나중에 위에서 바꿀 수 있어요.</p>
+    <div role="radiogroup" aria-label="캠퍼스">
+      <button type="button" class="campus-card" role="radio" aria-checked="true" data-campus="아산">
+        <div><b>아산캠퍼스</b><span>아산 · 천안 통학버스</span></div><i class="radio"></i></button>
+      <button type="button" class="campus-card" role="radio" aria-checked="false" data-campus="영동">
+        <div><b>영동캠퍼스</b><span>영동 통학버스</span></div><i class="radio"></i></button>
+    </div>
+    <div class="spacer"></div>
+    <button type="button" class="btn-primary" id="start">이대로 시작하기</button>
+  </div>
+
   <header>
-    <b>물어봐 캠퍼스</b>
-    <select id="campus" aria-label="캠퍼스"><option>아산</option><option>영동</option></select>
+    <div class="title">물어봐 캠퍼스</div>
+    <label class="campus-pill"><select id="campus" aria-label="캠퍼스"><option value="아산">아산캠퍼스</option><option value="영동">영동캠퍼스</option></select></label>
   </header>
   <div id="log">
-    <div class="msg bot">무엇이든 물어보세요. 학사일정, 공지, 장학, 통학버스, 동아리, 학교 FAQ를 찾아서 답해 드려요.</div>
+    <!-- 02 첫 화면 -->
+    <section class="home" id="home">
+      <h2>무엇이 궁금하세요?</h2>
+      <p class="lead">학사일정, 공지, 장학, 통학버스, 학식, 동아리를<br>학교 홈페이지에서 찾아 답해 드려요.</p>
+      <div class="label">이런 걸 많이 물어봐요</div>
+      <div class="chips" id="suggest"></div>
+      <div class="callout">답에는 찾은 홈페이지 글이 함께 나와요. 중요한 일정은 원문에서 한 번 더 확인해 주세요.</div>
+    </section>
   </div>
-  <form id="f">
-    <input id="q" maxlength="200" placeholder="질문을 입력하세요" autocomplete="off" autofocus>
-    <button id="send">보내기</button>
+  <form id="f" class="input">
+    <input id="q" maxlength="200" placeholder="궁금한 걸 물어보세요" autocomplete="off" aria-label="질문">
+    <button id="send" class="send" aria-label="보내기">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+    </button>
   </form>
+
+  <!-- 08 의견 시트 -->
+  <div class="dim" id="dim">
+    <div class="sheet" role="dialog" aria-labelledby="sheet-title">
+      <div class="handle"></div>
+      <h3 id="sheet-title">답이 어디가 이상했나요?</h3>
+      <p>적어 주시면 관리자가 확인해서 고쳐요.<br>비워 두고 보내도 돼요.</p>
+      <textarea id="fb-text" maxlength="300" placeholder="예) 날짜가 올해 일정이 아니에요"></textarea>
+      <div class="count"><span id="fb-count">0</span> / 300</div>
+      <button type="button" class="btn-primary" id="fb-send">보내기</button>
+    </div>
+  </div>
 </div>
 <script>
-const log = document.getElementById('log'), q = document.getElementById('q'), send = document.getElementById('send');
-function add(cls, text) {
-  const d = document.createElement('div'); d.className = 'msg ' + cls; d.textContent = text;
-  log.appendChild(d); log.scrollTop = log.scrollHeight; return d;
+const $ = (id) => document.getElementById(id);
+const log = $('log'), q = $('q'), send = $('send'), campusSel = $('campus');
+const AVATAR = '<svg width="22" height="22" viewBox="0 0 24 24" fill="#fff"><path d="M5 3h14a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3h-8l-5 4v-4H5a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3z"/><circle cx="9" cy="10.5" r="1.4" fill="#2F5BD3"/><circle cx="15" cy="10.5" r="1.4" fill="#2F5BD3"/></svg>';
+
+// 캠퍼스는 이 기기 브라우저에만 저장한다 (2.6). 저장소를 못 쓰면 매번 묻는다
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} },
+};
+
+// 02 추천 질문 칩 (화면에 고정. 서버 추천 질문 API는 아직 없음, FR-006)
+function renderSuggest() {
+  const bus = campusSel.value === '영동' ? '다음 통학버스 언제야?' : '다음 천안역 버스 언제야?';
+  const box = $('suggest'); box.textContent = '';
+  for (const s of [bus, '오늘 학식 메뉴', '휴학 신청 기간', '국가장학금 신청', '수강정정 언제까지야?']) {
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'chip'; b.textContent = s;
+    b.addEventListener('click', () => ask(s)); box.appendChild(b);
+  }
 }
+
+// 00 → 01(첫 실행만) → 02
+const saved = store.get('campus');
+if (saved) campusSel.value = saved;
+renderSuggest();
+setTimeout(() => {
+  $('splash').classList.add('out');
+  if (!saved) $('onboard').hidden = false; else q.focus();
+}, 1100);
+let picked = '아산';
+document.querySelectorAll('.campus-card').forEach(c => c.addEventListener('click', () => {
+  picked = c.dataset.campus;
+  document.querySelectorAll('.campus-card').forEach(x => x.setAttribute('aria-checked', x === c));
+}));
+$('start').addEventListener('click', () => {
+  campusSel.value = picked; store.set('campus', picked); renderSuggest();
+  $('onboard').hidden = true; q.focus();
+});
+
+function addRow(cls) {
+  const home = $('home'); if (home) home.remove();
+  const row = document.createElement('div'); row.className = 'row ' + cls;
+  if (cls === 'bot') { const a = document.createElement('div'); a.className = 'avatar'; a.innerHTML = AVATAR; row.appendChild(a); }
+  const d = document.createElement('div'); d.className = 'msg'; row.appendChild(d);
+  log.appendChild(row); log.scrollTop = log.scrollHeight; return d;
+}
+function addMe(text) { addRow('me').textContent = text; }
+
 // 되묻기(FR-027)에서 고른 학과. 이 화면을 닫기 전까지만 기억하고 서버에는 질문할 때만 보낸다
 let department = null;
 // 학과를 되물은 뒤 버튼 대신 입력창에 학과 이름을 적으면, 그 말을 학과로 받고 원래 질문을 다시 보낸다
-let waitingDept = null;     // 학과를 되물었던 원래 질문
+let waitingDept = null;
 
-// 되묻기 선택지를 버튼으로. department는 학과를 기억하고 같은 질문을 다시, refine은 원래 질문에 고른 말을 붙여 다시 묻는다
+// 05·06 되묻기 선택지. department는 학과를 기억하고 같은 질문을 다시, refine은 원래 질문에 고른 말을 붙여 다시 묻는다
 function addChoices(box, clarify, original, options) {
   options = options || clarify.options;
   if (!options || !options.length) return;
-  const wrap = document.createElement('div'); wrap.className = 'choices';
+  const wrap = document.createElement('div'); wrap.className = 'chips';
   for (const opt of options) {
-    const b = document.createElement('button'); b.type = 'button'; b.className = 'choice'; b.textContent = opt;
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'chip'; b.textContent = opt;
     b.addEventListener('click', () => {
       // 학과 목록의 '전체 보기'는 다른 캠퍼스까지 학과 전체를 펼친다 (질문은 다시 보내지 않음)
       if (clarify.field === 'department' && opt === '전체 보기' && clarify.more) {
-        wrap.remove(); addChoices(box, clarify, original, clarify.more); return;
+        const hint = box.querySelector('.hint'); wrap.remove();
+        addChoices(box, clarify, original, clarify.more); if (hint) box.appendChild(hint); return;
       }
-      wrap.querySelectorAll('button').forEach(x => x.disabled = true);
+      wrap.querySelectorAll('button').forEach(x => x.disabled = true); b.classList.add('on');
       waitingDept = null;
-      if (clarify.field === 'department') { department = opt; ask(original, `${opt} 선택`); }
-      else ask(opt.includes(original) ? opt : `${original} ${opt}`);
+      if (clarify.field === 'department') { department = opt; ask(original, opt); }
+      else ask(opt.includes(original) ? opt : `${original} ${opt}`, opt);
     });
     wrap.appendChild(b);
   }
@@ -87,18 +291,19 @@ function addChoices(box, clarify, original, options) {
 }
 
 // 답 본문을 줄 단위로 그린다. 서버(readable.py)가 목록은 '· '로, 긴 문단은 문장마다 줄을 나눠 보낸다.
-// textContent만 쓰므로 답에 HTML이 섞여 있어도 그대로 글자로 보인다
-function renderAnswer(box, text) {
+// 첫 줄(핵심)은 굵게. textContent만 쓰므로 답에 HTML이 섞여 있어도 그대로 글자로 보인다
+function renderAnswer(box, text, opts = {}) {
   box.textContent = '';
   const body = document.createElement('div'); body.className = 'ans';
-  const lines = text.split('\n'), multi = lines.length >= 4;
+  const lines = text.split('\n');
   lines.forEach((ln, i) => {
     const d = document.createElement('div');
     if (!ln.trim()) d.className = 'gap';
     else if (ln.startsWith('· ')) { d.className = 'li'; d.textContent = ln.slice(2); }
     else {
       d.textContent = ln;
-      if (i === 0 && multi && ln.length <= 60) d.className = 'lead';
+      if (i === 0) d.className = 'head';
+      else if (opts.mutedRest) d.className = 'muted';
       // '1. 일반휴학'처럼 번호 붙은 짧은 줄 밑에 '· ' 항목이 이어지면 소제목으로
       else if (/^(\d{1,2}|[가-하])\.\s/.test(ln) && ln.length <= 30 && (lines[i + 1] || '').startsWith('· ')) d.className = 'sub';
     }
@@ -107,67 +312,119 @@ function renderAnswer(box, text) {
   box.appendChild(body);
 }
 
-// '답이 이상해요': 누르면 무엇이 틀렸는지 한 줄 적게 하고, 관리 웹 '답변 피드백'으로 보낸다
-function addFeedback(box, logId) {
-  const wrap = document.createElement('div'); wrap.className = 'fb';
-  const b = document.createElement('button'); b.type = 'button'; b.className = 'fb-btn'; b.textContent = '답이 이상해요';
-  b.addEventListener('click', () => {
-    b.remove();
-    const input = document.createElement('input'); input.maxLength = 300; input.className = 'fb-in';
-    input.placeholder = '무엇이 틀렸나요? (선택)';
-    const ok = document.createElement('button'); ok.type = 'button'; ok.className = 'fb-btn'; ok.textContent = '보내기';
-    ok.addEventListener('click', async () => {
-      ok.disabled = true;
-      try {
-        await fetch('/api/v1/feedback', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ log_id: logId, comment: input.value.trim() }) });
-        wrap.textContent = '알려 주셔서 고마워요. 확인해서 고칠게요.';
-      } catch (e) { wrap.textContent = '보내지 못했어요.'; }
-    });
-    wrap.append(input, ok); input.focus();
-  });
-  wrap.appendChild(b); box.appendChild(wrap);
+// 출처 카드: 종류 · 제목, 메뉴 위치 · 수집일, 원문 보기 (FR-004, FR-007, FR-022)
+function addSources(box, sources) {
+  for (const s of sources || []) {
+    const c = document.createElement('div'); c.className = 'src';
+    const top = document.createElement('div'); top.className = 'top';
+    if (s.kind) { const t = document.createElement('span'); t.className = 'tag'; t.textContent = s.kind; top.appendChild(t); }
+    const t = document.createElement('span'); t.className = 't'; t.textContent = s.label || s.title; top.appendChild(t);
+    c.appendChild(top);
+    const meta = [];
+    // 메뉴 경로에 주소 조각('/u1/...do')이 섞인 자료가 있어 그 조각은 빼고 보여 준다
+    const path = (s.menu_path || '').split('>').map(x => x.trim()).filter(x => x && x !== '홈' && !x.startsWith('/') && !/\.(do|php|jsp|html?)\b/.test(x));
+    if (path.length) meta.push(path.join(' › '));
+    if (s.collected_at) { const [, m, d] = s.collected_at.slice(0, 10).split('-'); meta.push(`수집일 ${+m}월 ${+d}일`); }
+    if (meta.length) { const m = document.createElement('div'); m.className = 'm'; m.textContent = meta.join(' · '); c.appendChild(m); }
+    if (s.source_url) {
+      const a = document.createElement('a'); a.href = s.source_url; a.target = '_blank'; a.rel = 'noopener'; a.textContent = '원문 보기';
+      c.appendChild(a);
+    }
+    box.appendChild(c);
+  }
 }
 
+// 07 찾지 못했을 때: 서버가 담당 부서를 알면 '· 이 내용은 OO에 문의하면 됩니다.' 줄을 붙여 보낸다
+function renderNotFound(box, text) {
+  const m = text.match(/\n·\s*이 내용은\s*(.+?)에 문의하면 됩니다\.?\s*$/);
+  const main = m ? text.slice(0, m.index) : text;
+  const parts = main.split(/(?<=\.)\s+/);
+  renderAnswer(box, parts.join('\n'), { mutedRest: true });
+  if (m) {
+    const d = document.createElement('div'); d.className = 'dept';
+    const s = document.createElement('small'); s.textContent = '담당 부서';
+    const [, name, tel] = m[1].match(/^(.+?)\s*(?:\((.+)\))?$/);     // '생활관 (043-...)' → 이름, 전화
+    const b = document.createElement('b'); b.textContent = name;
+    d.append(s, b);
+    if (tel) { const t = document.createElement('div'); t.className = 'm'; t.textContent = tel; d.appendChild(t); }
+    box.appendChild(d);
+  }
+}
+
+// 08 의견 시트 → 09 보낸 뒤
+const dim = $('dim'), fbText = $('fb-text'), fbCount = $('fb-count'), fbSend = $('fb-send');
+let fbLogId = null, fbRow = null;
+function openSheet(logId, row) {
+  fbLogId = logId; fbRow = row; fbText.value = ''; fbCount.textContent = '0'; fbSend.disabled = false;
+  dim.classList.add('open'); setTimeout(() => fbText.focus(), 50);
+}
+function closeSheet() { dim.classList.remove('open'); }
+fbText.addEventListener('input', () => { fbCount.textContent = fbText.value.length; });
+dim.addEventListener('click', (e) => { if (e.target === dim) closeSheet(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSheet(); });
+fbSend.addEventListener('click', async () => {
+  fbSend.disabled = true;
+  try {
+    const r = await fetch('/api/v1/feedback', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ log_id: fbLogId, comment: fbText.value.trim() }) });
+    if (!r.ok) throw new Error();
+    closeSheet();
+    const s = document.createElement('div'); s.className = 'sent';
+    s.innerHTML = '<span class="ok"></span>'; s.append('알려 주셔서 고마워요. 확인해서 고칠게요.');
+    fbRow.replaceWith(s);
+  } catch (e) { fbSend.disabled = false; alert('보내지 못했어요. 다시 시도해 주세요.'); }
+});
+
 async function ask(text, shown) {
-  add('me', shown || text); send.disabled = true;
-  const wait = add('bot', '답을 찾는 중…');
+  addMe(shown || text); send.disabled = true;
+  const wait = addRow('bot');
+  wait.innerHTML = '<div class="loading"><span class="dots"><i></i><i></i><i></i></span>학교 홈페이지에서 찾는 중이에요</div>'
+                 + '<div class="loading-sub">길게는 10초 넘게 걸릴 수 있어요.</div>';
   try {
     const r = await fetch('/api/v1/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question: text, campus: document.getElementById('campus').value, department }) });
+      body: JSON.stringify({ question: text, campus: campusSel.value, department }) });
     const d = await r.json();
     if (!r.ok) { wait.textContent = (d.error && d.error.message) || '오류가 났어요.'; return; }
-    renderAnswer(wait, d.answer);
     if (d.clarify) {
+      wait.textContent = '';
+      const h = document.createElement('div'); h.className = 'ask-q'; h.textContent = d.answer; wait.appendChild(h);
       waitingDept = d.clarify.field === 'department' ? text : null;
-      addChoices(wait, d.clarify, text); return;
+      addChoices(wait, d.clarify, text);
+      if (d.clarify.field === 'department') {
+        const hint = document.createElement('div'); hint.className = 'hint';
+        hint.textContent = '목록에 없으면 학과 이름을 바로 적어도 돼요.'; wait.appendChild(hint);
+        const note = document.createElement('div'); note.className = 'note';
+        note.innerText = '· 고른 학과는 이 대화에서만 기억해요.\n· 캠퍼스를 바꾸면 학과를 다시 물어봐요.';
+        wait.parentElement.after(note);
+      }
+      return;
     }
-    const meta = document.createElement('div'); meta.className = 'meta';
-    meta.append(`${d.answer_type} · ${(d.elapsed_ms / 1000).toFixed(1)}초`);
-    for (const s of d.sources || []) {
-      meta.append(' · ');
-      if (s.source_url) { const a = document.createElement('a'); a.href = s.source_url; a.target = '_blank';
-        a.rel = 'noopener'; a.textContent = s.label || s.title; meta.append(a); }
-      else meta.append(s.label || s.title);
+    if (d.answer_type === '근거없음') renderNotFound(wait, d.answer);
+    else { renderAnswer(wait, d.answer); addSources(wait, d.sources); }
+    wait.title = `${d.answer_type} · ${(d.elapsed_ms / 1000).toFixed(1)}초`;
+    if (d.log_id) {
+      const row = document.createElement('div'); row.className = 'fb-row';
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'fb-btn'; b.textContent = '답이 이상해요';
+      b.addEventListener('click', () => openSheet(d.log_id, row));
+      row.appendChild(b); wait.appendChild(row);
     }
-    wait.appendChild(meta);
-    if (d.log_id) addFeedback(wait, d.log_id);
-  } catch (err) { wait.textContent = '서버에 연결하지 못했어요.'; }
+  } catch (err) { wait.textContent = '서버에 연결하지 못했어요. 잠시 뒤 다시 보내 주세요.'; }
   finally { send.disabled = false; q.focus(); log.scrollTop = log.scrollHeight; }
 }
 
-document.getElementById('f').addEventListener('submit', (e) => {
+$('f').addEventListener('submit', (e) => {
   e.preventDefault();
   const text = q.value.trim(); if (!text) return;
   q.value = '';
   if (waitingDept && text.length <= 20) {          // 되물은 학과에 대한 답으로 본다
     const original = waitingDept; waitingDept = null;
-    document.querySelectorAll('.choices button').forEach(x => x.disabled = true);
+    document.querySelectorAll('.chips button').forEach(x => x.disabled = true);
     department = text; ask(original, text); return;
   }
   waitingDept = null; ask(text);
 });
-document.getElementById('campus').addEventListener('change', () => { department = null; });   // 캠퍼스가 바뀌면 학과도 다시 묻는다
+// 캠퍼스가 바뀌면 저장하고, 학과도 다시 묻는다
+campusSel.addEventListener('change', () => { department = null; store.set('campus', campusSel.value); if ($('home')) renderSuggest(); });
 </script>
 </body>
 </html>
