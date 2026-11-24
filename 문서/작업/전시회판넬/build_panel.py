@@ -3,7 +3,8 @@
 학교가 준 샘플 판넬(05_캡스톤디자인_전시회_판넬(샘플-유원대학교).pptx)의 배경·칸·제목 띠를 그대로 쓰고,
 글과 그림만 우리 프로젝트 내용으로 바꾼다. 샘플 파일은 리포에 넣지 않는다 (샘플 그림 속성에 다른 사람 이름이 있음).
 
-사용: python build_panel.py <샘플.pptx> <출력.pptx>
+사용: python build_panel.py <샘플.pptx> <출력.pptx> [팀 사진]
+팀 사진은 얼굴이 나오는 개인정보라 리포에 넣지 않고 실행할 때 경로로만 받는다. 없으면 "(사진)" 자리로 둔다.
 그림: 문서/그림/전시회판넬/app_*.png (웹 채팅 화면, Figma 시안 색·컴포넌트 적용)
 수치 출처: 문서/보고서/진행보고서/진행보고서_11주차.md
 """
@@ -20,6 +21,7 @@ from pptx.oxml.ns import qn
 from pptx.util import Emu, Inches, Pt
 
 SRC, OUT = sys.argv[1], sys.argv[2]
+PHOTO = sys.argv[3] if len(sys.argv) > 3 else None
 FIG = Path(__file__).resolve().parents[2] / "그림" / "전시회판넬"
 A = "http://schemas.openxmlformats.org/drawingml/2006/main"
 
@@ -128,6 +130,15 @@ tbl = shapes["표 1"].table
 tbl.columns[0].width = Inches(1.6)
 tbl.columns[1].width = Inches(6.8)
 set_cell(tbl.cell(0, 1), "팀원: 송승현(조장), 이승우")
+if PHOTO:
+    # '(사진)' 칸을 비우고 그 자리에 팀 사진을 작게 붙인다. 팀원 글은 사진 가운데 높이에 맞춘다
+    set_cell(tbl.cell(0, 0), "")
+    ph = slide.shapes.add_picture(PHOTO, Inches(13.6), Inches(1.95), height=Inches(1.7))
+    ph.line.color.rgb = WHITE
+    ph.line.width = Pt(2)
+    shapes["표 1"].top = Inches(1.95 + 1.7 / 2) - shapes["표 1"].height // 2
+    tbl.columns[0].width = ph.width + Inches(0.2)
+    tbl.columns[1].width = Inches(8.4) - tbl.columns[0].width
 sub = clone_box(shapes["TextBox 4"], "부제목")
 set_text(sub, "RAG와 sLLM 기반 캠퍼스 정보 질의응답 앱", sz=28)
 sub.text_frame.paragraphs[0].alignment = PP_ALIGN.LEFT
@@ -285,13 +296,14 @@ arrow(gx, row4, gx, 17.7)
 label(gx + 0.15, 19.65, 2.5, "질문할 때 조회")
 
 # ---------- 4. 개발 결과 ----------
-# Figma 시안 화면 (문서/그림/전시회판넬/figma_*.png, 바깥 검은 배경은 투명으로 처리함). 화면 속 값은 예시
-set_text(shapes["TextBox 90"], "화면 디자인 (Figma 시안, 화면 속 값은 예시)")
+# 실제 서버 답으로 찍은 웹 채팅 화면 (문서/그림/전시회판넬/web_*.png). Figma 시안의 정류장·시간은 예시 값이라
+# 실제와 달라서(온양온천역·배방역 등) 판넬에는 구현 화면을 쓴다
+set_text(shapes["TextBox 90"], "구현 화면 (웹 채팅, Figma 디자인 적용)")
 shapes["TextBox 90"].left, shapes["TextBox 90"].top = Inches(1.0), Inches(22.95)
-shots = [("figma_00_start.png", "시작 화면"), ("figma_02_home.png", "첫 화면·추천 질문"),
-         ("figma_04_answer.png", "답변과 출처"), ("figma_06_clarify_stop.png", "되묻기 (정류장)")]
+shots = [("web_00_start.png", "시작 화면"), ("web_02_home.png", "첫 화면·추천 질문"),
+         ("web_04_answer.png", "답변과 출처"), ("web_06_clarify_stop.png", "되묻기 (정류장)")]
 iw = 2.15
-ih = iw * 1300 / 600
+ih = iw * 1688 / 780
 x0, gap = 1.15, (9.4 - 4 * iw) / 3
 for i, (f, cap) in enumerate(shots):
     x = x0 + i * (iw + gap)

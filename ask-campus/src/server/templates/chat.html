@@ -227,7 +227,8 @@ const store = {
 
 // 02 추천 질문 칩 (화면에 고정. 서버 추천 질문 API는 아직 없음, FR-006)
 function renderSuggest() {
-  const bus = campusSel.value === '영동' ? '다음 통학버스 언제야?' : '다음 천안역 버스 언제야?';
+  // 아산 통학버스는 천안터미널·두정역·롯데마트·삼일아파트(1·2호차), 천안아산역(3호차)만 간다. '천안역'은 정류장이 아님
+  const bus = campusSel.value === '영동' ? '다음 통학버스 언제야?' : '두정역 다음 통학버스 언제야?';
   const box = $('suggest'); box.textContent = '';
   for (const s of [bus, '오늘 학식 메뉴', '휴학 신청 기간', '국가장학금 신청', '수강정정 언제까지야?']) {
     const b = document.createElement('button'); b.type = 'button'; b.className = 'chip'; b.textContent = s;
